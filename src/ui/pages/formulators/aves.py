@@ -111,7 +111,7 @@ def _create_project_zip_export(
             "etapa": etapa,
             "usuario": usuario,
             "fecha": date.today().isoformat(),
-            "version": "modular-aves-tabs-1.0",
+            "version": "modular-aves-tabs-1.1",
             "nutrientes_seleccionados": nutrientes_seleccionados,
         }, indent=2, ensure_ascii=False))
 
@@ -369,13 +369,31 @@ def render_formulation_aves():
         default=st.session_state.get("aves_nutrients_selected", preset_compat[: min(14, len(preset_compat))]),
         key="aves_nutrients_selected",
     )
+
+    # FIX 3: Forzar EMA_AVES para Broiler
+    if etapa.startswith("Broiler"):
+        if "EMA_AVES" in nutrients_all:
+            selected_nutrients = [n for n in selected_nutrients if n != "EMA_POLLIT"]
+            if "EMA_AVES" not in selected_nutrients:
+                selected_nutrients.append("EMA_AVES")
+            st.session_state["aves_nutrients_selected"] = selected_nutrients
+
     if not selected_nutrients:
         return
 
     # ratios
     if "aves_ratios" not in st.session_state:
         st.session_state["aves_ratios"] = []
-    ratios_active = st.session_state["aves_ratios"]
+
+    # FIX 1: filtrar ratios activos válidos
+    ratios_active = [
+        r for r in st.session_state.get("aves_ratios", [])
+        if r.get("numerador") in selected_nutrients
+        and r.get("denominador") in selected_nutrients
+        and r.get("numerador") != r.get("denominador")
+        and r.get("operador") in {">=", "<=", "="}
+        and _safe_float(r.get("valor", 0), 0) > 0
+    ]
 
     # preview tabla
     req_preview = {
@@ -394,6 +412,14 @@ def render_formulation_aves():
         selected_stage=etapa,
         ratios=ratios_active,
     )
+
+    # FIX 2: mostrar causa real si preview falla
+    if not preview.get("success"):
+        st.warning(preview.get("message", "Preview no factible"))
+        diag = preview.get("infeasibility_diagnostics", [])
+        if diag:
+            with st.expander("Diagnóstico preview", expanded=False):
+                render_table(pd.DataFrame(diag))
 
     rows = []
     for n in selected_nutrients:
@@ -553,11 +579,10 @@ def render_report_tab():
 
 
 # =========================
-# ENTRADA PRINCIPAL DEL MÓDULO AVES
+# ENTRADA PRINCIPAL
 # =========================
 def render():
     st.title("Formulador · Aves")
-
     t1, t2, t3, t4 = st.tabs(["Formulación", "Resultados", "Gráficos", "Informe final"])
     with t1:
         render_formulation_aves()
