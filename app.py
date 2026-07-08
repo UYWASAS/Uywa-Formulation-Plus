@@ -106,12 +106,10 @@ elif route_key == "formulator_rumiantes":
         render_formulator_rumiantes()
 
 elif route_key == "results":
-    st.title("Resultados")
-    st.caption("Aquí moveremos tu bloque Tab Resultados actual.")
+    render_results()
 
 elif route_key == "charts":
-    st.title("Gráficos")
-    st.caption("Aquí moveremos tu bloque Tab Gráficos actual.")
+    render_charts()
 
 elif route_key == "scenarios":
     if not has_feature(user, "scenario_compare"):
