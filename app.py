@@ -1,17 +1,17 @@
 import streamlit as st
 
 from src.core.auth.service import USERS_DB, is_user_active
+from src.core.auth.policies import has_feature
+
 from src.ui.components.theme import apply_theme, render_brand_sidebar
 from src.ui.navigation import render_main_navigation, route_key_from_selection
-from src.core.auth.policies import has_feature
+
+from src.ui.pages.dashboard import render as render_dashboard
 from src.ui.pages.formulators.aves import render as render_formulator_aves
 from src.ui.pages.formulators.cerdos import render as render_formulator_cerdos
 from src.ui.pages.formulators.rumiantes import render as render_formulator_rumiantes
-from src.ui.pages.dashboard import render as render_dashboard
 from src.ui.pages.results import render as render_results
 from src.ui.pages.charts import render as render_charts
-from optimization import DietFormulator
-from requirements_presets import PRESETS
 
 
 # ============================================================
@@ -56,6 +56,14 @@ def login():
         st.stop()
 
 
+def logout():
+    keys_to_clear = ["logged_in", "usuario", "user"]
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
+    st.rerun()
+
+
 # ============================================================
 # BOOT
 # ============================================================
@@ -66,20 +74,30 @@ if not st.session_state.get("logged_in", False):
     login()
     st.stop()
 
-user = st.session_state.get("user", None)
+user = st.session_state.get("user")
+if user is None:
+    st.error("No se encontró información del usuario en sesión.")
+    logout()
+    st.stop()
+
 render_brand_sidebar(user)
 
-st.markdown(
-    f"<div style='text-align:right'>👤 Usuario: <b>{st.session_state['usuario']}</b></div>",
-    unsafe_allow_html=True,
-)
+top_col1, top_col2 = st.columns([6, 1])
+with top_col1:
+    st.markdown(
+        f"<div style='text-align:right'>👤 Usuario: <b>{st.session_state.get('usuario','')}</b></div>",
+        unsafe_allow_html=True,
+    )
+with top_col2:
+    if st.button("Salir", key="btn_logout_top"):
+        logout()
 
 selection = render_main_navigation(user)
 route_key = route_key_from_selection(selection)
 
 
 # ============================================================
-# ROUTER (MVP)
+# ROUTER (MVP MODULAR)
 # ============================================================
 
 if route_key == "dashboard":
