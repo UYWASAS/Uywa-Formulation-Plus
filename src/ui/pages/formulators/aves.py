@@ -105,14 +105,17 @@ def _create_project_zip_export(
             for n, vals in req_data.items()
         ])
         zf.writestr("requirements.csv", req_df.to_csv(index=False))
-        zf.writestr("ingredient_limits.json", json.dumps({"min_limits": min_limits, "max_limits": max_limits}, indent=2, ensure_ascii=False))
+        zf.writestr(
+            "ingredient_limits.json",
+            json.dumps({"min_limits": min_limits, "max_limits": max_limits}, indent=2, ensure_ascii=False),
+        )
         zf.writestr("ratios.json", json.dumps(ratios, indent=2, ensure_ascii=False))
         zf.writestr("project_metadata.json", json.dumps({
             "especie": "Aves",
             "etapa": etapa,
             "usuario": usuario,
             "fecha": date.today().isoformat(),
-            "version": "modular-aves-1.2",
+            "version": "modular-aves-1.3",
             "nutrientes_seleccionados": nutrientes_seleccionados,
         }, indent=2, ensure_ascii=False))
 
@@ -256,6 +259,7 @@ def render():
     st.title("Formulador · Aves")
     st.caption("Flujo premium modular: matriz, límites, requerimientos en vivo, ratios y formulación completa.")
 
+    # 1) Carga ZIP
     with st.expander("Cargar proyecto completo UYWA (.zip)", expanded=False):
         up_zip = st.file_uploader("Subir ZIP de proyecto", type=["zip"], key="aves_project_zip_upload")
         if up_zip is not None and st.button("Restaurar proyecto", key="aves_restore_zip_btn"):
@@ -264,8 +268,6 @@ def render():
                 render_card("Error al restaurar proyecto", " | ".join(errors), variant="danger")
             else:
                 st.session_state["aves_loaded_ingredients_df"] = data["ingredients_df"].copy()
-
-                # NUEVO: persistir etapa restaurada
                 restored_etapa = str(data.get("metadata", {}).get("etapa", "")).strip()
                 if restored_etapa:
                     st.session_state["aves_etapa"] = restored_etapa
@@ -305,6 +307,7 @@ def render():
                 )
                 st.rerun()
 
+    # 2) Matriz
     render_section("Matriz de ingredientes", "Carga manual o usa data-files/matriz_ingredientes.*")
     up = st.file_uploader("Matriz de ingredientes (.csv/.xlsx)", type=["csv", "xlsx"], key="aves_matriz_upload")
     df = _load_ingredients_robust(up)
@@ -319,9 +322,9 @@ def render():
     df = df.copy()
     df["Ingrediente"] = df["Ingrediente"].astype(str)
     df["precio"] = pd.to_numeric(df["precio"], errors="coerce").fillna(0)
-
     render_card("Matriz activa", f"Ingredientes disponibles: {len(df)}", variant="success")
 
+    # 3) Ingredientes
     render_section("Selección de ingredientes")
     ing_all = df["Ingrediente"].dropna().tolist()
     pre = st.session_state.get("aves_ingredientes_sel", ing_all[: min(25, len(ing_all))])
@@ -335,6 +338,41 @@ def render():
     with st.expander("Ver o editar composición de ingredientes seleccionados", expanded=False):
         df_sel = st.data_editor(df_sel, use_container_width=True, num_rows="dynamic", key="aves_df_editor")
 
+    # 4) Límites
+    render_section("Límites de inclusión (%)")
+    ing_limit = st.multiselect(
+        "Ingredientes con límites",
+        options=ingredientes_sel,
+        default=st.session_state.get("aves_ingredientes_limitar", []),
+        key="aves_ingredientes_limitar",
+    )
+
+    min_limits, max_limits = {}, {}
+    min_loaded = st.session_state.get("aves_min_limits_loaded", {})
+    max_loaded = st.session_state.get("aves_max_limits_loaded", {})
+
+    if ing_limit:
+        with st.expander("Editar límites por ingrediente", expanded=True):
+            h = st.columns([2, 1, 1])
+            h[0].markdown("**Ingrediente**")
+            h[1].markdown("**Máximo (%)**")
+            h[2].markdown("**Mínimo (%)**")
+            for ing in ing_limit:
+                c = st.columns([2, 1, 1])
+                c[0].write(ing)
+                max_v = c[1].number_input(
+                    "max", min_value=0.0, max_value=100.0,
+                    value=float(st.session_state.get(f"aves_max_{ing}", max_loaded.get(ing, 100.0))),
+                    key=f"aves_max_{ing}", label_visibility="collapsed",
+                )
+                min_v_txt = c[2].text_input(
+                    "min", value=str(st.session_state.get(f"aves_min_{ing}", min_loaded.get(ing, ""))),
+                    key=f"aves_min_{ing}", label_visibility="collapsed", placeholder="0",
+                )
+                min_limits[ing] = _safe_float(min_v_txt, 0)
+                max_limits[ing] = _safe_float(max_v, 0)
+
+    # 5) Etapa + preset + nutrientes
     render_section("Requerimientos nutricionales")
     etapas_aves = [
         "Broiler Iniciación", "Broiler Crecimiento", "Broiler Cebo", "Broiler Acabado",
@@ -342,20 +380,16 @@ def render():
         "Pollita Inicio Puesta", "Ponedora Pre-Pico", "Ponedora Inicio Postura",
         "Ponedora Final Postura", "Ponedora Problemas Cascara",
     ]
-
-    # NUEVO: etapa robusta con fallback si lo restaurado no existe
     etapa_default = st.session_state.get("aves_etapa", etapas_aves[0])
     if etapa_default not in etapas_aves:
         etapa_default = etapas_aves[0]
-    etapa_idx = etapas_aves.index(etapa_default)
+    etapa = st.selectbox("Etapa (Aves)", etapas_aves, index=etapas_aves.index(etapa_default), key="aves_etapa")
 
-    etapa = st.selectbox("Etapa (Aves)", etapas_aves, index=etapa_idx, key="aves_etapa")
     nutrients_all = get_nutrient_list(df_sel if not df_sel.empty else df)
     preset = get_stage_preset("Aves", etapa)
     preset_compat = [n for n in preset.keys() if n in nutrients_all]
 
     preferred_ema, other_ema, ema_reason = _resolve_ema_for_stage_from_preset(etapa, preset, nutrients_all)
-
     if preferred_ema and other_ema and preferred_ema in preset_compat and other_ema in preset_compat:
         preset_compat = [n for n in preset_compat if n != other_ema]
         st.warning(f"Preset ambiguo en EMA para '{etapa}'. Se priorizó {preferred_ema}.")
@@ -392,5 +426,241 @@ def render():
         st.info("Selecciona nutrientes para continuar.")
         return
 
-    # ... (tu bloque de tabla preview, ratios, solver final y vista previa puede quedarse igual al que ya tenías)
-    # Para no romperte nada, mantén exactamente tu bloque desde "# 6) Ratios" en adelante.
+    # 6) Ratios
+    render_section("Ratios entre nutrientes (opcional)")
+    if "aves_ratios" not in st.session_state:
+        st.session_state["aves_ratios"] = []
+
+    if len(selected_nutrients) >= 2:
+        with st.expander("Agregar ratio", expanded=False):
+            c1, c2, c3, c4 = st.columns([2, 2, 1, 2])
+            num = c1.selectbox("Numerador", selected_nutrients, key="aves_ratio_num")
+            den = c2.selectbox("Denominador", [x for x in selected_nutrients if x != num], key="aves_ratio_den")
+            op = c3.selectbox("Op", [">=", "<=", "="], key="aves_ratio_op")
+            val = c4.number_input("Valor", min_value=0.0, value=1.0, step=0.01, key="aves_ratio_val")
+            if st.button("Agregar ratio", key="aves_ratio_add"):
+                st.session_state["aves_ratios"].append({"numerador": num, "denominador": den, "operador": op, "valor": float(val)})
+                st.rerun()
+
+    if st.session_state["aves_ratios"]:
+        with st.expander("Ratios activos", expanded=True):
+            del_idx = []
+            for i, r in enumerate(st.session_state["aves_ratios"]):
+                x1, x2 = st.columns([6, 1])
+                x1.write(f"{r['numerador']} / {r['denominador']} {r['operador']} {r['valor']}")
+                if x2.button("Eliminar", key=f"aves_ratio_del_{i}"):
+                    del_idx.append(i)
+            for i in sorted(del_idx, reverse=True):
+                st.session_state["aves_ratios"].pop(i)
+            if del_idx:
+                st.rerun()
+
+    ratios_active = [r for r in st.session_state["aves_ratios"] if r.get("numerador") in selected_nutrients and r.get("denominador") in selected_nutrients and r.get("numerador") != r.get("denominador")]
+
+    # 7) Tabla unificada + preview
+    render_section("Tabla de requerimientos y análisis en vivo", "Min/Max editables. Lo demás es analítico.")
+    req_preview = {
+        n: {
+            "min": _normalize_bound(st.session_state.get(f"aves_req_min_{n}", preset.get(n, {}).get("min", 0))),
+            "max": _normalize_bound(st.session_state.get(f"aves_req_max_{n}", preset.get(n, {}).get("max", 0))),
+        }
+        for n in selected_nutrients
+    }
+
+    preview_result = {"success": False}
+    preview_nut, preview_shadow, preview_cost, preview_diet = {}, {}, 0, {}
+
+    try:
+        preview_result = OptimizationAdapter().solve(
+            ingredients_df=df_sel,
+            nutrient_list=selected_nutrients,
+            requirements=req_preview,
+            limits={"min": min_limits, "max": max_limits},
+            selected_species="Aves",
+            selected_stage=etapa,
+            ratios=ratios_active,
+        )
+        if preview_result.get("success"):
+            preview_nut = preview_result.get("nutritional_values", {})
+            preview_shadow = preview_result.get("shadow_prices", {})
+            preview_cost = preview_result.get("cost", 0)
+            preview_diet = preview_result.get("diet", {})
+    except Exception as e:
+        preview_result = {"success": False, "message": f"Error en preview: {e}"}
+
+    if not preview_result.get("success"):
+        render_card("Vista previa no factible", preview_result.get("message", "No se pudo calcular la formulación preliminar."), variant="warning")
+
+    rows = []
+    for n in selected_nutrients:
+        mn = req_preview[n]["min"]
+        mx = req_preview[n]["max"]
+        if preview_result.get("success"):
+            obt = float(preview_nut.get(n, 0) or 0)
+            prog_txt, _ = _render_progress(mn, mx, obt)
+            sp = preview_shadow.get(n, None) if mn > 0 else None
+            imp_txt, imp_val = _shadow_impact_pct(sp, preview_cost)
+            marg = _marginal_cost_ton(sp)
+            imp_cls = _impact_class(imp_val)
+            ing_assoc = _get_limiting_ing(n, preview_diet, df_sel)
+        else:
+            obt, prog_txt, imp_txt, marg, imp_cls, ing_assoc = None, "No factible", "—", "—", "—", "—"
+
+        rows.append({
+            "Nutriente": n,
+            "Min": mn,
+            "Max": mx if mx > 0 else None,
+            "Obtenido": obt,
+            "% Logrado": prog_txt,
+            "Impacto relativo": imp_txt,
+            "Costo marginal": marg,
+            "Impacto": imp_cls,
+            "Ing. asociado": ing_assoc,
+        })
+
+    with st.form("aves_req_form_unified"):
+        df_edit = st.data_editor(
+            pd.DataFrame(rows),
+            use_container_width=True,
+            hide_index=True,
+            key="aves_req_editor_unified",
+            column_config={
+                "Nutriente": st.column_config.TextColumn("Nutriente", disabled=True),
+                "Min": st.column_config.NumberColumn("Min", min_value=0.0, format="%.3f"),
+                "Max": st.column_config.NumberColumn("Max", min_value=0.0, format="%.3f"),
+                "Obtenido": st.column_config.NumberColumn("Obtenido", disabled=True, format="%.3f"),
+                "% Logrado": st.column_config.TextColumn("% Logrado", disabled=True),
+                "Impacto relativo": st.column_config.TextColumn("Impacto relativo", disabled=True),
+                "Costo marginal": st.column_config.TextColumn("Costo marginal", disabled=True),
+                "Impacto": st.column_config.TextColumn("Impacto", disabled=True),
+                "Ing. asociado": st.column_config.TextColumn("Ing. asociado", disabled=True),
+            },
+        )
+        save_req_btn = st.form_submit_button("Guardar cambios en requerimientos", type="primary")
+
+    if save_req_btn:
+        req_input = {}
+        for _, r in df_edit.iterrows():
+            n = r["Nutriente"]
+            mn = _normalize_bound(r["Min"]) if pd.notna(r["Min"]) else 0
+            mx = _normalize_bound(r["Max"]) if pd.notna(r["Max"]) else 0
+            st.session_state[f"aves_req_min_{n}"] = mn
+            st.session_state[f"aves_req_max_{n}"] = mx
+            req_input[n] = {"min": mn, "max": mx}
+        st.session_state["aves_req_input"] = req_input
+        st.rerun()
+    else:
+        req_input = st.session_state.get("aves_req_input", req_preview)
+
+    # 8) Descargar req + Guardar ZIP
+    if selected_nutrients and req_input:
+        s = io.StringIO()
+        s.write("especie,etapa,nutriente,min_value,max_value\n")
+        for n in selected_nutrients:
+            s.write(f"Aves,{etapa},{n},{req_input[n]['min']},{req_input[n]['max']}\n")
+        st.download_button("Descargar requerimientos editados (CSV)", s.getvalue(), f"requerimientos_aves_{date.today().strftime('%Y%m%d')}.csv", "text/csv")
+
+    render_section("Guardar proyecto completo")
+    if df_sel is not None and not df_sel.empty and req_input:
+        pname = st.text_input("Nombre del proyecto", value=f"Aves_{etapa}_{date.today().strftime('%Y%m%d')}", key="aves_project_name")
+        if st.button("Preparar ZIP", key="aves_prepare_zip"):
+            zb = _create_project_zip_export(
+                ingredientes_df=df_sel,
+                req_data=req_input,
+                etapa=etapa,
+                usuario=st.session_state.get("usuario", "usuario"),
+                min_limits=min_limits,
+                max_limits=max_limits,
+                ratios=ratios_active,
+                nutrientes_seleccionados=selected_nutrients,
+            )
+            st.download_button("Descargar proyecto ZIP", zb, f"{pname}.zip", "application/zip")
+
+    # 9) Validación + solver final
+    st.markdown("---")
+    render_section("Verificación y formulación final")
+    errors, warnings = _validate_before_solve(df_sel, selected_nutrients, req_input, min_limits, max_limits, ratios_active)
+
+    if warnings:
+        with st.expander("Advertencias", expanded=False):
+            for w in warnings:
+                st.warning(w)
+
+    if errors:
+        render_card("No se puede formular todavía", "Corrige los errores listados.", variant="danger")
+        for e in errors:
+            st.write(f"- {e}")
+        return
+
+    ca, cb = st.columns(2)
+    with ca:
+        if st.button("Verificar factibilidad preliminar", use_container_width=True, key="aves_precheck"):
+            pre = OptimizationAdapter().solve(
+                ingredients_df=df_sel,
+                nutrient_list=selected_nutrients,
+                requirements=req_input,
+                limits={"min": min_limits, "max": max_limits},
+                selected_species="Aves",
+                selected_stage=etapa,
+                ratios=ratios_active,
+            )
+            if pre.get("success"):
+                render_card("Factibilidad", "No se detectó bloqueo preliminar crítico.", variant="success")
+            else:
+                render_card("Posible conflicto", pre.get("message", "Sin detalle"), variant="warning")
+                if pre.get("infeasibility_diagnostics"):
+                    render_table(pd.DataFrame(pre["infeasibility_diagnostics"]))
+
+    with cb:
+        if st.button("Formular dieta óptima", type="primary", use_container_width=True, key="aves_solve_final"):
+            result = OptimizationAdapter().solve(
+                ingredients_df=df_sel,
+                nutrient_list=selected_nutrients,
+                requirements=req_input,
+                limits={"min": min_limits, "max": max_limits},
+                selected_species="Aves",
+                selected_stage=etapa,
+                ratios=ratios_active,
+            )
+            st.session_state["last_result_aves"] = result
+            st.session_state["req_input"] = req_input
+            st.session_state["nutrientes_seleccionados"] = selected_nutrients
+            st.session_state["ingredients_df"] = df_sel.copy()
+
+            if result.get("success"):
+                st.session_state["last_diet"] = result.get("diet", {})
+                st.session_state["last_cost"] = result.get("cost", 0)
+                st.session_state["last_nutritional_values"] = result.get("nutritional_values", {})
+                st.session_state["last_constraint_diagnostics"] = result.get("constraint_diagnostics", {})
+                st.session_state["last_infeasibility_diagnostics"] = []
+                render_card("Formulación exitosa", "Resultado guardado en Resultados/Gráficos.", variant="success")
+            else:
+                st.session_state["last_infeasibility_diagnostics"] = result.get("infeasibility_diagnostics", [])
+                render_card("No se pudo formular", result.get("message", "Sin detalle"), variant="danger")
+
+    # 10) Vista previa
+    result = st.session_state.get("last_result_aves")
+    if result:
+        st.markdown("---")
+        render_section("Vista previa de formulación")
+        if result.get("success"):
+            diet = result.get("diet", {})
+            cost = result.get("cost", 0)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                render_metric_card("Costo (100 kg)", f"${cost:.2f}", "Salida solver")
+            with c2:
+                render_metric_card("Costo/kg", f"${(cost/100):.4f}", "Estimado")
+            with c3:
+                render_metric_card("Ingredientes activos", str(len(diet)), "Con inclusión > 0")
+
+            df_d = pd.DataFrame(list(diet.items()), columns=["Ingrediente", "Inclusión (%)"])
+            if not df_d.empty:
+                df_d = df_d.sort_values("Inclusión (%)", ascending=False)
+                render_table(df_d, column_config={"Inclusión (%)": st.column_config.NumberColumn("Inclusión (%)", format="%.4f")})
+        else:
+            st.error(result.get("message", "No se pudo formular."))
+            diag = result.get("infeasibility_diagnostics", [])
+            if diag:
+                with st.expander("Diagnóstico preliminar", expanded=False):
+                    render_table(pd.DataFrame(diag))
