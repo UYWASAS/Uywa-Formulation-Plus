@@ -1,10 +1,9 @@
-"""
-Fuente única de presets nutricionales internos del módulo.
-Puedes pegar aquí el diccionario PRESETS completo sin depender de archivos raíz.
-"""
+from src.core.formulation.presets.aves import AVES_PRESETS
+from src.core.formulation.presets.cerdos import CERDOS_PRESETS
+from src.core.formulation.presets.rumiantes import RUMIANTES_PRESETS
 
 PRESETS = {
-    "Aves": {},
-    "Cerdos": {},
-    "Rumiantes": {},
+    "Aves": AVES_PRESETS,
+    "Cerdos": CERDOS_PRESETS,
+    "Rumiantes": RUMIANTES_PRESETS,
 }
