@@ -1,6 +1,6 @@
 import streamlit as st
 
-from auth import USERS_DB, is_user_active
+from src.core.auth.service import USERS_DB, is_user_active
 from src.ui.components.theme import apply_theme, render_brand_sidebar
 from src.ui.navigation import render_main_navigation, route_key_from_selection
 from src.core.auth.policies import has_feature
