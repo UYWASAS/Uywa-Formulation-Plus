@@ -6,6 +6,7 @@ from src.ui.navigation import render_main_navigation, route_key_from_selection
 from src.core.auth.policies import has_feature
 from src.ui.pages.formulators.aves import render as render_formulator_aves
 from src.ui.pages.formulators.cerdos import render as render_formulator_cerdos
+from src.ui.pages.formulators.rumiantes import render as render_formulator_rumiantes
 from src.ui.pages.dashboard import render as render_dashboard
 
 
@@ -100,8 +101,7 @@ elif route_key == "formulator_rumiantes":
     if not has_feature(user, "formulator_rumiantes"):
         st.error("Tu plan no incluye Formulador Rumiantes.")
     else:
-        st.title("Formulador · Rumiantes")
-        st.caption("Módulo preparado para integración.")
+        render_formulator_rumiantes()
 
 elif route_key == "results":
     st.title("Resultados")
