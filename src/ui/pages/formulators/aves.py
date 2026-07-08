@@ -372,11 +372,14 @@ def render_formulation_aves():
 
     # FIX 3: Forzar EMA_AVES para Broiler
     if etapa.startswith("Broiler"):
-        if "EMA_AVES" in nutrients_all:
-            selected_nutrients = [n for n in selected_nutrients if n != "EMA_POLLIT"]
-            if "EMA_AVES" not in selected_nutrients:
-                selected_nutrients.append("EMA_AVES")
-            st.session_state["aves_nutrients_selected"] = selected_nutrients
+        fixed_nutrients = [n for n in selected_nutrients if n != "EMA_POLLIT"]
+        if "EMA_AVES" in nutrients_all and "EMA_AVES" not in fixed_nutrients:
+            fixed_nutrients.append("EMA_AVES")
+    
+        # Solo actualiza si hay cambio, y haz rerun inmediato
+        if fixed_nutrients != selected_nutrients:
+            st.session_state["aves_nutrients_selected"] = fixed_nutrients
+            st.rerun()
 
     if not selected_nutrients:
         return
