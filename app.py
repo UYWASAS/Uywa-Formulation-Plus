@@ -5,6 +5,7 @@ from src.ui.components.theme import apply_theme, render_brand_sidebar
 from src.ui.navigation import render_main_navigation, route_key_from_selection
 from src.core.auth.policies import has_feature
 from src.ui.pages.formulators.aves import render as render_formulator_aves
+from src.ui.pages.dashboard import render as render_dashboard
 
 
 # ============================================================
@@ -76,8 +77,7 @@ route_key = route_key_from_selection(selection)
 # ============================================================
 
 if route_key == "dashboard":
-    st.title("UYWA Nutrition · Dashboard")
-    st.info("Arquitectura modular activa. Siguiente paso: conectar páginas por especie.")
+    render_dashboard(user)
 
 elif route_key == "formulators_home":
     st.title("Formuladores")
