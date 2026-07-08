@@ -5,6 +5,7 @@ from src.ui.components.theme import apply_theme, render_brand_sidebar
 from src.ui.navigation import render_main_navigation, route_key_from_selection
 from src.core.auth.policies import has_feature
 from src.ui.pages.formulators.aves import render as render_formulator_aves
+from src.ui.pages.formulators.cerdos import render as render_formulator_cerdos
 from src.ui.pages.dashboard import render as render_dashboard
 
 
