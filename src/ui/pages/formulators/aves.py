@@ -17,9 +17,6 @@ from src.ui.components.cards import render_card, render_metric_card
 from src.ui.components.tables import render_table
 
 
-# =========================
-# Helpers
-# =========================
 def _safe_float(v, default=0.0):
     try:
         if isinstance(v, str):
@@ -111,7 +108,7 @@ def _create_project_zip_export(
             "etapa": etapa,
             "usuario": usuario,
             "fecha": date.today().isoformat(),
-            "version": "modular-aves-tabs-1.2",
+            "version": "modular-aves-tabs-1.3",
             "nutrientes_seleccionados": nutrientes_seleccionados,
         }, indent=2, ensure_ascii=False))
 
@@ -248,9 +245,6 @@ def _validate_before_solve(df_sel, nutrients, req_input, min_limits, max_limits,
     return errors, warnings
 
 
-# =========================
-# TAB 1: FORMULACIÓN
-# =========================
 def render_formulation_aves():
     st.subheader("Formulación")
 
@@ -347,9 +341,10 @@ def render_formulation_aves():
     preset = get_stage_preset("Aves", etapa)
     preset_compat = [n for n in preset.keys() if n in nutrients_all]
 
-    preferred_ema, other_ema, _ = _resolve_ema_for_stage_from_preset(etapa, preset, nutrients_all)
+    preferred_ema, other_ema, ema_reason = _resolve_ema_for_stage_from_preset(etapa, preset, nutrients_all)
     if preferred_ema and other_ema and preferred_ema in preset_compat and other_ema in preset_compat:
         preset_compat = [n for n in preset_compat if n != other_ema]
+        st.warning(f"Preset ambiguo en EMA para '{etapa}'. Se priorizó {preferred_ema}.")
 
     if st.button("Cargar preset completo", key="aves_load_preset"):
         selected = preset_compat.copy()
@@ -361,6 +356,15 @@ def render_formulation_aves():
         for n in selected:
             st.session_state[f"aves_req_min_{n}"] = float(preset.get(n, {}).get("min", 0) or 0)
             st.session_state[f"aves_req_max_{n}"] = float(preset.get(n, {}).get("max", 0) or 0)
+
+        # inicializar req_input con lo que acabas de cargar
+        st.session_state["aves_req_input"] = {
+            n: {
+                "min": _normalize_bound(st.session_state.get(f"aves_req_min_{n}", 0)),
+                "max": _normalize_bound(st.session_state.get(f"aves_req_max_{n}", 0)),
+            }
+            for n in selected
+        }
         st.rerun()
 
     selected_nutrients = st.multiselect(
@@ -370,19 +374,25 @@ def render_formulation_aves():
         key="aves_nutrients_selected",
     )
 
-    # No escribir st.session_state["aves_nutrients_selected"] aquí (key del widget).
     effective_nutrients = list(selected_nutrients)
-
-    if etapa.startswith("Broiler"):
-        effective_nutrients = [n for n in effective_nutrients if n != "EMA_POLLIT"]
-        if "EMA_AVES" in nutrients_all and "EMA_AVES" not in effective_nutrients:
-            effective_nutrients.append("EMA_AVES")
-
-    if effective_nutrients != selected_nutrients:
-        st.info("Para etapas Broiler se usa EMA_AVES; EMA_POLLIT se excluye automáticamente.")
 
     if not effective_nutrients:
         return
+
+    # mantener/crear req_input consistente con los nutrientes actuales
+    current_req_input = st.session_state.get("aves_req_input", {})
+    req_input = {}
+    for n in effective_nutrients:
+        if n in current_req_input:
+            req_input[n] = {
+                "min": _normalize_bound(current_req_input[n].get("min", 0)),
+                "max": _normalize_bound(current_req_input[n].get("max", 0)),
+            }
+        else:
+            req_input[n] = {
+                "min": _normalize_bound(st.session_state.get(f"aves_req_min_{n}", preset.get(n, {}).get("min", 0))),
+                "max": _normalize_bound(st.session_state.get(f"aves_req_max_{n}", preset.get(n, {}).get("max", 0))),
+            }
 
     if "aves_ratios" not in st.session_state:
         st.session_state["aves_ratios"] = []
@@ -396,17 +406,11 @@ def render_formulation_aves():
         and _safe_float(r.get("valor", 0), 0) > 0
     ]
 
-    req_preview = {
-        n: {
-            "min": _normalize_bound(st.session_state.get(f"aves_req_min_{n}", preset.get(n, {}).get("min", 0))),
-            "max": _normalize_bound(st.session_state.get(f"aves_req_max_{n}", preset.get(n, {}).get("max", 0))),
-        } for n in effective_nutrients
-    }
-
+    # preview con LA MISMA fuente req_input
     preview = OptimizationAdapter().solve(
         ingredients_df=df_sel,
         nutrient_list=effective_nutrients,
-        requirements=req_preview,
+        requirements=req_input,
         limits={"min": min_limits, "max": max_limits},
         selected_species="Aves",
         selected_stage=etapa,
@@ -422,8 +426,8 @@ def render_formulation_aves():
 
     rows = []
     for n in effective_nutrients:
-        mn = req_preview[n]["min"]
-        mx = req_preview[n]["max"]
+        mn = req_input[n]["min"]
+        mx = req_input[n]["max"]
         if preview.get("success"):
             obt = float(preview.get("nutritional_values", {}).get(n, 0) or 0)
             prog_txt, _ = _render_progress(mn, mx, obt)
@@ -446,18 +450,21 @@ def render_formulation_aves():
         save_req_btn = st.form_submit_button("Guardar cambios en requerimientos", type="primary")
 
     if save_req_btn:
-        req_input = {}
+        new_req_input = {}
         for _, r in df_edit.iterrows():
-            req_input[r["Nutriente"]] = {
+            new_req_input[r["Nutriente"]] = {
                 "min": _normalize_bound(r["Min"]) if pd.notna(r["Min"]) else 0,
                 "max": _normalize_bound(r["Max"]) if pd.notna(r["Max"]) else 0,
             }
-        st.session_state["aves_req_input"] = req_input
+            st.session_state[f"aves_req_min_{r['Nutriente']}"] = new_req_input[r["Nutriente"]]["min"]
+            st.session_state[f"aves_req_max_{r['Nutriente']}"] = new_req_input[r["Nutriente"]]["max"]
+
+        st.session_state["aves_req_input"] = new_req_input
         st.rerun()
     else:
-        req_input = st.session_state.get("aves_req_input", req_preview)
+        st.session_state["aves_req_input"] = req_input
 
-    errors, warnings = _validate_before_solve(df_sel, effective_nutrients, req_input, min_limits, max_limits, ratios_active)
+    errors, warnings = _validate_before_solve(df_sel, effective_nutrients, st.session_state["aves_req_input"], min_limits, max_limits, ratios_active)
     if warnings:
         for w in warnings:
             st.warning(w)
@@ -472,7 +479,7 @@ def render_formulation_aves():
             pre = OptimizationAdapter().solve(
                 ingredients_df=df_sel,
                 nutrient_list=effective_nutrients,
-                requirements=req_input,
+                requirements=st.session_state["aves_req_input"],
                 limits={"min": min_limits, "max": max_limits},
                 selected_species="Aves",
                 selected_stage=etapa,
@@ -485,7 +492,7 @@ def render_formulation_aves():
             result = OptimizationAdapter().solve(
                 ingredients_df=df_sel,
                 nutrient_list=effective_nutrients,
-                requirements=req_input,
+                requirements=st.session_state["aves_req_input"],
                 limits={"min": min_limits, "max": max_limits},
                 selected_species="Aves",
                 selected_stage=etapa,
@@ -495,9 +502,6 @@ def render_formulation_aves():
             st.success("Formulación exitosa") if result.get("success") else st.error(result.get("message", "No se pudo formular"))
 
 
-# =========================
-# TAB 2
-# =========================
 def render_results_tab():
     st.subheader("Resultados")
     result = st.session_state.get("last_result_aves")
@@ -538,9 +542,6 @@ def render_results_tab():
             render_table(pd.DataFrame([{"Nutriente": k, "Valor": v} for k, v in nutritional_values.items()]))
 
 
-# =========================
-# TAB 3
-# =========================
 def render_charts_tab():
     st.subheader("Gráficos")
     result = st.session_state.get("last_result_aves")
@@ -557,9 +558,6 @@ def render_charts_tab():
     st.bar_chart(df.set_index("Ingrediente"))
 
 
-# =========================
-# TAB 4
-# =========================
 def render_report_tab():
     st.subheader("Informe final")
     result = st.session_state.get("last_result_aves")
@@ -577,9 +575,6 @@ def render_report_tab():
     st.write(f"**Ingredientes activos:** {len(result.get('diet',{}))}")
 
 
-# =========================
-# ENTRADA PRINCIPAL
-# =========================
 def render():
     st.title("Formulador · Aves")
     t1, t2, t3, t4 = st.tabs(["Formulación", "Resultados", "Gráficos", "Informe final"])
