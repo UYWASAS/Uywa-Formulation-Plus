@@ -34,6 +34,37 @@ def _normalize_bound(v):
     return x if x > 0 else 0.0
 
 
+def _resolve_ema_for_stage_from_preset(etapa, preset, nutrients_all):
+    """
+    Regla:
+    - Prioriza lo que diga el preset de la etapa.
+    - Si preset trae ambos EMA -> prioriza EMA_AVES (seguridad operativa).
+    - Si preset no trae ninguno -> fallback EMA_AVES si existe en matriz, sino EMA_POLLIT.
+    """
+    ema_in_preset = [c for c in ["EMA_POLLIT", "EMA_AVES"] if c in (preset or {})]
+    ema_in_matrix = [c for c in ["EMA_POLLIT", "EMA_AVES"] if c in (nutrients_all or [])]
+
+    if len(ema_in_preset) == 1:
+        preferred = ema_in_preset[0]
+        reason = "preset"
+    elif len(ema_in_preset) > 1:
+        preferred = "EMA_AVES" if "EMA_AVES" in ema_in_preset else ema_in_preset[0]
+        reason = "preset_ambiguous"
+    else:
+        preferred = "EMA_AVES" if "EMA_AVES" in ema_in_matrix else (
+            "EMA_POLLIT" if "EMA_POLLIT" in ema_in_matrix else None
+        )
+        reason = "fallback_matrix"
+
+    other = None
+    if preferred == "EMA_AVES":
+        other = "EMA_POLLIT"
+    elif preferred == "EMA_POLLIT":
+        other = "EMA_AVES"
+
+    return preferred, other, reason
+
+
 def _load_ingredients_robust(uploaded_file=None):
     # 1) upload explícito
     if uploaded_file is not None:
@@ -112,7 +143,7 @@ def _create_project_zip_export(
             "etapa": etapa,
             "usuario": usuario,
             "fecha": date.today().isoformat(),
-            "version": "modular-aves-1.0",
+            "version": "modular-aves-1.1",
             "nutrientes_seleccionados": nutrientes_seleccionados,
         }
         zf.writestr("project_metadata.json", json.dumps(metadata, indent=2, ensure_ascii=False))
@@ -285,7 +316,6 @@ def render():
             else:
                 st.session_state["aves_loaded_ingredients_df"] = data["ingredients_df"].copy()
 
-                # req
                 req_data = {}
                 nutr_loaded = []
                 rdf = data["requirements_df"]
@@ -304,7 +334,6 @@ def render():
                 st.session_state["aves_req_input"] = req_data
                 st.session_state["aves_nutrients_selected"] = nutr_loaded
 
-                # limits + ratios
                 min_l = data["limits"].get("min_limits", {})
                 max_l = data["limits"].get("max_limits", {})
                 st.session_state["aves_min_limits_loaded"] = min_l
@@ -312,7 +341,6 @@ def render():
                 st.session_state["aves_ingredientes_limitar"] = sorted(set(list(min_l.keys()) + list(max_l.keys())))
                 st.session_state["aves_ratios"] = data.get("ratios", [])
 
-                # defaults ingredient selection
                 idf = data["ingredients_df"]
                 if "Ingrediente" in idf.columns:
                     st.session_state["aves_ingredientes_sel"] = idf["Ingrediente"].dropna().astype(str).tolist()
@@ -373,7 +401,6 @@ def render():
     with st.expander("Ver o editar composición de ingredientes seleccionados", expanded=False):
         df_sel = st.data_editor(df_sel, use_container_width=True, num_rows="dynamic", key="aves_df_editor")
 
-    # descargar/cargar matriz seleccionada
     with st.expander("Descargar o cargar matriz seleccionada", expanded=False):
         c1, c2 = st.columns(2)
         with c1:
@@ -415,7 +442,6 @@ def render():
     min_limits = {}
     max_limits = {}
 
-    # precarga limits restaurados
     min_loaded = st.session_state.get("aves_min_limits_loaded", {})
     max_loaded = st.session_state.get("aves_max_limits_loaded", {})
 
@@ -477,22 +503,62 @@ def render():
     preset = get_stage_preset("Aves", etapa)
     preset_compat = [n for n in preset.keys() if n in nutrients_all]
 
+    preferred_ema, other_ema, ema_reason = _resolve_ema_for_stage_from_preset(etapa, preset, nutrients_all)
+
+    if preferred_ema and other_ema and preferred_ema in preset_compat and other_ema in preset_compat:
+        preset_compat = [n for n in preset_compat if n != other_ema]
+        st.warning(
+            f"El preset de '{etapa}' incluye ambos EMA. Se priorizó {preferred_ema}. "
+            "Revisa la base de requerimientos para dejar un solo EMA por etapa."
+        )
+
     cbtn1, cbtn2 = st.columns([1, 2])
     with cbtn1:
         if st.button("Cargar preset completo", key="aves_load_preset"):
-            st.session_state["aves_nutrients_selected"] = preset_compat
-            for n in preset_compat:
+            selected = preset_compat.copy()
+
+            if preferred_ema and other_ema:
+                selected = [n for n in selected if n != other_ema]
+                if preferred_ema in nutrients_all and preferred_ema not in selected:
+                    selected.insert(0, preferred_ema)
+
+            st.session_state["aves_nutrients_selected"] = selected
+
+            for n in selected:
                 st.session_state[f"aves_req_min_{n}"] = float(preset.get(n, {}).get("min", 0) or 0)
                 st.session_state[f"aves_req_max_{n}"] = float(preset.get(n, {}).get("max", 0) or 0)
-            st.success(f"Preset cargado ({len(preset_compat)} nutrientes compatibles).")
+
+            st.success(f"Preset cargado ({len(selected)} nutrientes compatibles).")
             st.rerun()
+
+    default_selected = st.session_state.get(
+        "aves_nutrients_selected",
+        preset_compat[: min(14, len(preset_compat))]
+    )
+
+    if preferred_ema and other_ema:
+        default_selected = [n for n in default_selected if n != other_ema]
+        if preferred_ema in nutrients_all and preferred_ema not in default_selected:
+            default_selected = [preferred_ema] + default_selected
 
     selected_nutrients = st.multiselect(
         "Nutrientes a considerar",
         options=nutrients_all,
-        default=st.session_state.get("aves_nutrients_selected", preset_compat[: min(14, len(preset_compat))]),
+        default=default_selected,
         key="aves_nutrients_selected",
     )
+
+    if preferred_ema and other_ema and preferred_ema in selected_nutrients and other_ema in selected_nutrients:
+        selected_nutrients = [n for n in selected_nutrients if n != other_ema]
+        st.session_state["aves_nutrients_selected"] = selected_nutrients
+        st.info(f"Se mantuvo {preferred_ema} para la etapa '{etapa}' y se removió {other_ema}.")
+
+    with st.expander("Debug EMA etapa/preset", expanded=False):
+        st.write("Etapa:", etapa)
+        st.write("EMA en matriz:", [c for c in ["EMA_POLLIT", "EMA_AVES"] if c in nutrients_all])
+        st.write("EMA en preset:", [c for c in ["EMA_POLLIT", "EMA_AVES"] if c in preset.keys()])
+        st.write("EMA activo:", preferred_ema, "| fuente:", ema_reason)
+
     if not selected_nutrients:
         st.info("Selecciona nutrientes para continuar.")
         return
@@ -542,22 +608,20 @@ def render():
     # 7) Tabla unificada y análisis en vivo
     # ----------------------------
     render_section("Tabla de requerimientos y análisis en vivo", "Min/Max editables. Lo demás es analítico.")
-    
-    # req_preview
+
     req_preview = {}
     for n in selected_nutrients:
         req_preview[n] = {
             "min": _normalize_bound(st.session_state.get(f"aves_req_min_{n}", preset.get(n, {}).get("min", 0))),
             "max": _normalize_bound(st.session_state.get(f"aves_req_max_{n}", preset.get(n, {}).get("max", 0))),
         }
-    
-    # preview solver
+
     preview_result = {"success": False}
     preview_nut = {}
     preview_shadow = {}
     preview_cost = 0
     preview_diet = {}
-    
+
     try:
         adapter_preview = OptimizationAdapter()
         preview_result = adapter_preview.solve(
@@ -576,25 +640,23 @@ def render():
             preview_diet = preview_result.get("diet", {})
     except Exception as e:
         preview_result = {"success": False, "message": f"Error en preview: {e}"}
-    
-    # NUEVO: aviso claro cuando no hay factibilidad preliminar
+
     if not preview_result.get("success"):
         render_card(
             "Vista previa no factible",
             preview_result.get("message", "No se pudo calcular la formulación preliminar."),
             variant="warning",
         )
-    
+
     rows = []
     for n in selected_nutrients:
         mn = req_preview.get(n, {}).get("min", 0)
         mx = req_preview.get(n, {}).get("max", 0)
-    
-        # NUEVO: no mostrar 0.000 engañoso cuando la preview falla
+
         if preview_result.get("success"):
             obt = float(preview_nut.get(n, 0) or 0)
             prog_txt, _ = _render_progress(mn, mx, obt)
-    
+
             sp = preview_shadow.get(n, None) if mn > 0 else None
             imp_txt, imp_val = _shadow_impact_pct(sp, preview_cost)
             marg = _marginal_cost_ton(sp)
@@ -607,7 +669,7 @@ def render():
             marg = "—"
             imp_cls = "—"
             ing_assoc = "—"
-    
+
         rows.append(
             {
                 "Nutriente": n,
@@ -621,7 +683,7 @@ def render():
                 "Ing. asociado": ing_assoc,
             }
         )
-    
+
     with st.form("aves_req_form_unified"):
         df_edit = st.data_editor(
             pd.DataFrame(rows),
@@ -642,7 +704,7 @@ def render():
         )
         st.caption("Impacto relativo = presión sobre costo total. Costo marginal = USD/ton por +1 unidad del nutriente.")
         save_req_btn = st.form_submit_button("Guardar cambios en requerimientos", type="primary")
-    
+
     if save_req_btn:
         req_input = {}
         for _, r in df_edit.iterrows():
@@ -657,20 +719,19 @@ def render():
         st.rerun()
     else:
         req_input = st.session_state.get("aves_req_input", req_preview)
-    
-        # Descargar requerimientos CSV
-        if selected_nutrients and req_input:
-            s = io.StringIO()
-            s.write("especie,etapa,nutriente,min_value,max_value\n")
-            for n in selected_nutrients:
-                s.write(f"Aves,{etapa},{n},{req_input.get(n,{}).get('min',0)},{req_input.get(n,{}).get('max',0)}\n")
-            st.download_button(
-                "Descargar requerimientos editados (CSV)",
-                data=s.getvalue(),
-                file_name=f"requerimientos_aves_{date.today().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                key="aves_req_download",
-            )
+
+    if selected_nutrients and req_input:
+        s = io.StringIO()
+        s.write("especie,etapa,nutriente,min_value,max_value\n")
+        for n in selected_nutrients:
+            s.write(f"Aves,{etapa},{n},{req_input.get(n,{}).get('min',0)},{req_input.get(n,{}).get('max',0)}\n")
+        st.download_button(
+            "Descargar requerimientos editados (CSV)",
+            data=s.getvalue(),
+            file_name=f"requerimientos_aves_{date.today().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            key="aves_req_download",
+        )
 
     # ----------------------------
     # 8) Guardar proyecto ZIP
@@ -763,7 +824,6 @@ def render():
                 ratios=ratios_active,
             )
 
-            # Compatibilidad modular + legacy
             st.session_state["last_result_aves"] = result
             st.session_state["req_input"] = req_input
             st.session_state["nutrientes_seleccionados"] = selected_nutrients
