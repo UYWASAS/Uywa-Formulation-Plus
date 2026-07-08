@@ -94,8 +94,7 @@ elif route_key == "formulator_cerdos":
     if not has_feature(user, "formulator_cerdos"):
         st.error("Tu plan no incluye Formulador Cerdos.")
     else:
-        st.title("Formulador · Cerdos")
-        st.caption("Módulo preparado para integración.")
+        render_formulator_cerdos()
 
 elif route_key == "formulator_rumiantes":
     if not has_feature(user, "formulator_rumiantes"):
