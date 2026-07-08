@@ -111,7 +111,7 @@ def _create_project_zip_export(
             "etapa": etapa,
             "usuario": usuario,
             "fecha": date.today().isoformat(),
-            "version": "modular-aves-tabs-1.1",
+            "version": "modular-aves-tabs-1.2",
             "nutrientes_seleccionados": nutrientes_seleccionados,
         }, indent=2, ensure_ascii=False))
 
@@ -370,45 +370,42 @@ def render_formulation_aves():
         key="aves_nutrients_selected",
     )
 
-    # FIX 3: Forzar EMA_AVES para Broiler
-    if etapa.startswith("Broiler"):
-        fixed_nutrients = [n for n in selected_nutrients if n != "EMA_POLLIT"]
-        if "EMA_AVES" in nutrients_all and "EMA_AVES" not in fixed_nutrients:
-            fixed_nutrients.append("EMA_AVES")
-    
-        # Solo actualiza si hay cambio, y haz rerun inmediato
-        if fixed_nutrients != selected_nutrients:
-            st.session_state["aves_nutrients_selected"] = fixed_nutrients
-            st.rerun()
+    # No escribir st.session_state["aves_nutrients_selected"] aquí (key del widget).
+    effective_nutrients = list(selected_nutrients)
 
-    if not selected_nutrients:
+    if etapa.startswith("Broiler"):
+        effective_nutrients = [n for n in effective_nutrients if n != "EMA_POLLIT"]
+        if "EMA_AVES" in nutrients_all and "EMA_AVES" not in effective_nutrients:
+            effective_nutrients.append("EMA_AVES")
+
+    if effective_nutrients != selected_nutrients:
+        st.info("Para etapas Broiler se usa EMA_AVES; EMA_POLLIT se excluye automáticamente.")
+
+    if not effective_nutrients:
         return
 
-    # ratios
     if "aves_ratios" not in st.session_state:
         st.session_state["aves_ratios"] = []
 
-    # FIX 1: filtrar ratios activos válidos
     ratios_active = [
         r for r in st.session_state.get("aves_ratios", [])
-        if r.get("numerador") in selected_nutrients
-        and r.get("denominador") in selected_nutrients
+        if r.get("numerador") in effective_nutrients
+        and r.get("denominador") in effective_nutrients
         and r.get("numerador") != r.get("denominador")
         and r.get("operador") in {">=", "<=", "="}
         and _safe_float(r.get("valor", 0), 0) > 0
     ]
 
-    # preview tabla
     req_preview = {
         n: {
             "min": _normalize_bound(st.session_state.get(f"aves_req_min_{n}", preset.get(n, {}).get("min", 0))),
             "max": _normalize_bound(st.session_state.get(f"aves_req_max_{n}", preset.get(n, {}).get("max", 0))),
-        } for n in selected_nutrients
+        } for n in effective_nutrients
     }
 
     preview = OptimizationAdapter().solve(
         ingredients_df=df_sel,
-        nutrient_list=selected_nutrients,
+        nutrient_list=effective_nutrients,
         requirements=req_preview,
         limits={"min": min_limits, "max": max_limits},
         selected_species="Aves",
@@ -416,7 +413,6 @@ def render_formulation_aves():
         ratios=ratios_active,
     )
 
-    # FIX 2: mostrar causa real si preview falla
     if not preview.get("success"):
         st.warning(preview.get("message", "Preview no factible"))
         diag = preview.get("infeasibility_diagnostics", [])
@@ -425,7 +421,7 @@ def render_formulation_aves():
                 render_table(pd.DataFrame(diag))
 
     rows = []
-    for n in selected_nutrients:
+    for n in effective_nutrients:
         mn = req_preview[n]["min"]
         mx = req_preview[n]["max"]
         if preview.get("success"):
@@ -461,7 +457,7 @@ def render_formulation_aves():
     else:
         req_input = st.session_state.get("aves_req_input", req_preview)
 
-    errors, warnings = _validate_before_solve(df_sel, selected_nutrients, req_input, min_limits, max_limits, ratios_active)
+    errors, warnings = _validate_before_solve(df_sel, effective_nutrients, req_input, min_limits, max_limits, ratios_active)
     if warnings:
         for w in warnings:
             st.warning(w)
@@ -475,7 +471,7 @@ def render_formulation_aves():
         if st.button("Verificar factibilidad preliminar", key="aves_precheck"):
             pre = OptimizationAdapter().solve(
                 ingredients_df=df_sel,
-                nutrient_list=selected_nutrients,
+                nutrient_list=effective_nutrients,
                 requirements=req_input,
                 limits={"min": min_limits, "max": max_limits},
                 selected_species="Aves",
@@ -488,7 +484,7 @@ def render_formulation_aves():
         if st.button("Formular dieta óptima", type="primary", key="aves_solve_final"):
             result = OptimizationAdapter().solve(
                 ingredients_df=df_sel,
-                nutrient_list=selected_nutrients,
+                nutrient_list=effective_nutrients,
                 requirements=req_input,
                 limits={"min": min_limits, "max": max_limits},
                 selected_species="Aves",
