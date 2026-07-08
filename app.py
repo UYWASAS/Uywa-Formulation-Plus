@@ -8,6 +8,8 @@ from src.ui.pages.formulators.aves import render as render_formulator_aves
 from src.ui.pages.formulators.cerdos import render as render_formulator_cerdos
 from src.ui.pages.formulators.rumiantes import render as render_formulator_rumiantes
 from src.ui.pages.dashboard import render as render_dashboard
+from src.ui.pages.results import render as render_results
+from src.ui.pages.charts import render as render_charts
 
 
 # ============================================================
