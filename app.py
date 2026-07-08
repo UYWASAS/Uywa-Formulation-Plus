@@ -4,6 +4,7 @@ from auth import USERS_DB, is_user_active
 from src.ui.components.theme import apply_theme, render_brand_sidebar
 from src.ui.navigation import render_main_navigation, route_key_from_selection
 from src.core.auth.policies import has_feature
+from src.ui.pages.formulators.aves import render as render_formulator_aves
 
 
 # ============================================================
@@ -86,8 +87,7 @@ elif route_key == "formulator_aves":
     if not has_feature(user, "formulator_aves"):
         st.error("Tu plan no incluye Formulador Aves.")
     else:
-        st.title("Formulador · Aves")
-        st.caption("En el próximo paso conectamos aquí tu flujo actual de formulación.")
+        render_formulator_aves()
 
 elif route_key == "formulator_cerdos":
     if not has_feature(user, "formulator_cerdos"):
