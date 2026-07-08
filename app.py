@@ -12,23 +12,11 @@ from src.ui.pages.formulators.cerdos import render as render_formulator_cerdos
 from src.ui.pages.formulators.rumiantes import render as render_formulator_rumiantes
 
 
-# ============================================================
-# CONFIG APP
-# ============================================================
+st.set_page_config(page_title="Formulador UYWA Premium", layout="wide")
 
-st.set_page_config(
-    page_title="Formulador UYWA Premium",
-    layout="wide",
-)
-
-
-# ============================================================
-# AUTH
-# ============================================================
 
 def login():
     st.title("Iniciar sesión")
-
     username = st.text_input("Usuario", key="usuario_login")
     password = st.text_input("Contraseña", type="password", key="password_login")
 
@@ -55,16 +43,10 @@ def login():
 
 
 def logout():
-    keys_to_clear = ["logged_in", "usuario", "user", "module"]
-    for key in keys_to_clear:
-        if key in st.session_state:
-            del st.session_state[key]
+    for key in ["logged_in", "usuario", "user", "module"]:
+        st.session_state.pop(key, None)
     st.rerun()
 
-
-# ============================================================
-# BOOT
-# ============================================================
 
 apply_theme()
 
@@ -78,10 +60,8 @@ if user is None:
     logout()
     st.stop()
 
-# Sidebar macro (paso 1)
 module = render_sidebar_navigation(user)
 
-# Header superior simple
 top_col1, top_col2 = st.columns([6, 1])
 with top_col1:
     st.markdown(
@@ -91,11 +71,6 @@ with top_col1:
 with top_col2:
     if st.button("Salir", key="btn_logout_top"):
         logout()
-
-
-# ============================================================
-# ROUTER MACRO
-# ============================================================
 
 if module == "formulador_aves":
     if not has_feature(user, "formulator_aves"):
@@ -131,8 +106,3 @@ elif module == "tool_materias_primas":
 
 else:
     render_dashboard(user)
-    st.caption("Módulo para gestión de usuarios/planes.")
-
-else:
-    st.title("UYWA")
-    st.warning("Ruta no reconocida.")
