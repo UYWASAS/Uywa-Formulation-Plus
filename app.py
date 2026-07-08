@@ -3,15 +3,13 @@ import streamlit as st
 from src.core.auth.service import USERS_DB, is_user_active
 from src.core.auth.policies import has_feature
 
-from src.ui.components.theme import apply_theme, render_brand_sidebar
-from src.ui.navigation import render_main_navigation, route_key_from_selection
+from src.ui.components.theme import apply_theme
+from src.ui.components.navigation import render_sidebar_navigation
 
 from src.ui.pages.dashboard import render as render_dashboard
 from src.ui.pages.formulators.aves import render as render_formulator_aves
 from src.ui.pages.formulators.cerdos import render as render_formulator_cerdos
 from src.ui.pages.formulators.rumiantes import render as render_formulator_rumiantes
-from src.ui.pages.results import render as render_results
-from src.ui.pages.charts import render as render_charts
 
 
 # ============================================================
@@ -57,7 +55,7 @@ def login():
 
 
 def logout():
-    keys_to_clear = ["logged_in", "usuario", "user"]
+    keys_to_clear = ["logged_in", "usuario", "user", "module"]
     for key in keys_to_clear:
         if key in st.session_state:
             del st.session_state[key]
@@ -80,8 +78,10 @@ if user is None:
     logout()
     st.stop()
 
-render_brand_sidebar(user)
+# Sidebar macro (paso 1)
+module = render_sidebar_navigation(user)
 
+# Header superior simple
 top_col1, top_col2 = st.columns([6, 1])
 with top_col1:
     st.markdown(
@@ -92,68 +92,45 @@ with top_col2:
     if st.button("Salir", key="btn_logout_top"):
         logout()
 
-selection = render_main_navigation(user)
-route_key = route_key_from_selection(selection)
-
 
 # ============================================================
-# ROUTER (MVP MODULAR)
+# ROUTER MACRO
 # ============================================================
 
-if route_key == "dashboard":
-    render_dashboard(user)
-
-elif route_key == "formulators_home":
-    st.title("Formuladores")
-    st.write("Selecciona un formulador por especie en el menú lateral.")
-
-elif route_key == "formulator_aves":
+if module == "formulador_aves":
     if not has_feature(user, "formulator_aves"):
         st.error("Tu plan no incluye Formulador Aves.")
     else:
         render_formulator_aves()
 
-elif route_key == "formulator_cerdos":
+elif module == "formulador_cerdos":
     if not has_feature(user, "formulator_cerdos"):
         st.error("Tu plan no incluye Formulador Cerdos.")
     else:
         render_formulator_cerdos()
 
-elif route_key == "formulator_rumiantes":
+elif module == "formulador_rumiantes":
     if not has_feature(user, "formulator_rumiantes"):
         st.error("Tu plan no incluye Formulador Rumiantes.")
     else:
         render_formulator_rumiantes()
 
-elif route_key == "results":
-    render_results()
-
-elif route_key == "charts":
-    render_charts()
-
-elif route_key == "scenarios":
-    if not has_feature(user, "scenario_compare"):
-        st.error("Tu plan no incluye Comparador de Escenarios.")
-    else:
-        st.title("Comparador de Escenarios")
-        st.caption("Aquí moveremos tu bloque Tab Comparar Escenarios.")
-
-elif route_key == "tool_energy_predictor":
+elif module == "tool_energia":
     if not has_feature(user, "tool_energy_predictor"):
-        st.error("Tu plan no incluye Predictor de Energía.")
+        st.error("Tu plan no incluye Calculador/Predictor de Energía.")
     else:
-        st.title("Tool · Predictor de Energía")
-        st.caption("Módulo nuevo en construcción.")
+        st.title("⚡ Calculador de Energía")
+        st.caption("Módulo en construcción.")
 
-elif route_key == "tool_raw_material_analyzer":
+elif module == "tool_materias_primas":
     if not has_feature(user, "tool_raw_material_analyzer"):
-        st.error("Tu plan no incluye Analizador de Materias Primas.")
+        st.error("Tu plan no incluye Comparador de Materias Primas.")
     else:
-        st.title("Tool · Analizador de Materias Primas")
-        st.caption("Módulo nuevo en construcción.")
+        st.title("🧪 Comparador de Materias Primas")
+        st.caption("Módulo en construcción.")
 
-elif route_key == "admin":
-    st.title("Administración")
+else:
+    render_dashboard(user)
     st.caption("Módulo para gestión de usuarios/planes.")
 
 else:
