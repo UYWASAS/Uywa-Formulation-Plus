@@ -542,7 +542,7 @@ def render():
     # 7) Tabla unificada y análisis en vivo
     # ----------------------------
     render_section("Tabla de requerimientos y análisis en vivo", "Min/Max editables. Lo demás es analítico.")
-
+    
     # req_preview
     req_preview = {}
     for n in selected_nutrients:
@@ -550,14 +550,14 @@ def render():
             "min": _normalize_bound(st.session_state.get(f"aves_req_min_{n}", preset.get(n, {}).get("min", 0))),
             "max": _normalize_bound(st.session_state.get(f"aves_req_max_{n}", preset.get(n, {}).get("max", 0))),
         }
-
+    
     # preview solver
     preview_result = {"success": False}
     preview_nut = {}
     preview_shadow = {}
     preview_cost = 0
     preview_diet = {}
-
+    
     try:
         adapter_preview = OptimizationAdapter()
         preview_result = adapter_preview.solve(
@@ -574,22 +574,40 @@ def render():
             preview_shadow = preview_result.get("shadow_prices", {})
             preview_cost = preview_result.get("cost", 0)
             preview_diet = preview_result.get("diet", {})
-    except Exception:
-        preview_result = {"success": False}
-
+    except Exception as e:
+        preview_result = {"success": False, "message": f"Error en preview: {e}"}
+    
+    # NUEVO: aviso claro cuando no hay factibilidad preliminar
+    if not preview_result.get("success"):
+        render_card(
+            "Vista previa no factible",
+            preview_result.get("message", "No se pudo calcular la formulación preliminar."),
+            variant="warning",
+        )
+    
     rows = []
     for n in selected_nutrients:
         mn = req_preview.get(n, {}).get("min", 0)
         mx = req_preview.get(n, {}).get("max", 0)
-        obt = float(preview_nut.get(n, 0) or 0)
-        prog_txt, _ = _render_progress(mn, mx, obt)
-
-        sp = preview_shadow.get(n, None) if mn > 0 else None
-        imp_txt, imp_val = _shadow_impact_pct(sp, preview_cost)
-        marg = _marginal_cost_ton(sp)
-        imp_cls = _impact_class(imp_val)
-        ing_assoc = _get_limiting_ing(n, preview_diet, df_sel)
-
+    
+        # NUEVO: no mostrar 0.000 engañoso cuando la preview falla
+        if preview_result.get("success"):
+            obt = float(preview_nut.get(n, 0) or 0)
+            prog_txt, _ = _render_progress(mn, mx, obt)
+    
+            sp = preview_shadow.get(n, None) if mn > 0 else None
+            imp_txt, imp_val = _shadow_impact_pct(sp, preview_cost)
+            marg = _marginal_cost_ton(sp)
+            imp_cls = _impact_class(imp_val)
+            ing_assoc = _get_limiting_ing(n, preview_diet, df_sel)
+        else:
+            obt = None
+            prog_txt = "No factible"
+            imp_txt = "—"
+            marg = "—"
+            imp_cls = "—"
+            ing_assoc = "—"
+    
         rows.append(
             {
                 "Nutriente": n,
@@ -603,7 +621,7 @@ def render():
                 "Ing. asociado": ing_assoc,
             }
         )
-
+    
     with st.form("aves_req_form_unified"):
         df_edit = st.data_editor(
             pd.DataFrame(rows),
@@ -624,7 +642,7 @@ def render():
         )
         st.caption("Impacto relativo = presión sobre costo total. Costo marginal = USD/ton por +1 unidad del nutriente.")
         save_req_btn = st.form_submit_button("Guardar cambios en requerimientos", type="primary")
-
+    
     if save_req_btn:
         req_input = {}
         for _, r in df_edit.iterrows():
@@ -639,20 +657,20 @@ def render():
         st.rerun()
     else:
         req_input = st.session_state.get("aves_req_input", req_preview)
-
-    # Descargar requerimientos CSV
-    if selected_nutrients and req_input:
-        s = io.StringIO()
-        s.write("especie,etapa,nutriente,min_value,max_value\n")
-        for n in selected_nutrients:
-            s.write(f"Aves,{etapa},{n},{req_input.get(n,{}).get('min',0)},{req_input.get(n,{}).get('max',0)}\n")
-        st.download_button(
-            "Descargar requerimientos editados (CSV)",
-            data=s.getvalue(),
-            file_name=f"requerimientos_aves_{date.today().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            key="aves_req_download",
-        )
+    
+        # Descargar requerimientos CSV
+        if selected_nutrients and req_input:
+            s = io.StringIO()
+            s.write("especie,etapa,nutriente,min_value,max_value\n")
+            for n in selected_nutrients:
+                s.write(f"Aves,{etapa},{n},{req_input.get(n,{}).get('min',0)},{req_input.get(n,{}).get('max',0)}\n")
+            st.download_button(
+                "Descargar requerimientos editados (CSV)",
+                data=s.getvalue(),
+                file_name=f"requerimientos_aves_{date.today().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                key="aves_req_download",
+            )
 
     # ----------------------------
     # 8) Guardar proyecto ZIP
