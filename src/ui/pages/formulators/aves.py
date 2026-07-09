@@ -1,7 +1,6 @@
 import os
 import json
 import zipfile
-from io import BytesIO
 
 import pandas as pd
 import streamlit as st
@@ -11,6 +10,8 @@ from src.core.formulation.presets import get_stage_preset
 from src.adapters.optimization_adapter import OptimizationAdapter
 
 from src.core.scenarios.build_scenario import build_scenario_payload, scenario_to_json
+from src.core.reports.client_report_html import build_client_report_html
+from src.core.scenarios.export_scenario import export_scenario_zip
 
 from src.ui.components.sections import render_section
 from src.ui.components.cards import render_card
@@ -509,55 +510,95 @@ def render_report_tab():
         st.write(result.get("message", "Sin detalle"))
         return
 
-    st.success("Informe rápido generado")
-    st.write(f"**Costo total (100kg):** ${result.get('cost', 0):.2f}")
+    st.success("Informe listo para exportar")
+    cost_100kg = result.get("cost", 0)
+    st.write(f"**Costo total (100kg):** ${cost_100kg:.2f}")
+    st.write(f"**Costo/kg:** ${cost_100kg/100:.2f}")
+    st.write(f"**Costo/ton:** ${cost_100kg/100*1000:,.2f}")
     st.write(f"**Ingredientes activos:** {len(result.get('diet', {}))}")
 
-    # --- Escenario técnico descargable ---
-    render_section("Escenario técnico", "Exporta un escenario estandarizado compatible para comparación futura.")
+    render_section("Entregables", "Descarga un informe amigable para cliente y un paquete técnico para comparación futura.")
 
     last_inputs = st.session_state.get("aves_last_inputs", {})
-    ingredients_df = st.session_state.get("ingredients_df", pd.DataFrame())
+    ingredients_df = st.session_state.get("ingredients_df", None)
+    usuario = st.session_state.get("usuario", "usuario")
 
     scenario_name = st.text_input(
         "Nombre del escenario",
-        value=f"Aves_{last_inputs.get('stage', 'Etapa')}",
+        value=f"Aves_{last_inputs.get('stage', 'Etapa')}_{usuario}",
         key="aves_report_scenario_name",
     )
 
-    if st.button("Construir escenario técnico", key="aves_build_scenario_btn"):
-        payload = build_scenario_payload(
-            scenario_name=scenario_name,
-            species="Aves",
-            stage=last_inputs.get("stage", "Sin etapa"),
-            user=st.session_state.get("usuario", "usuario"),
-            ingredients_df=ingredients_df,
-            selected_ingredients=last_inputs.get("selected_ingredients", []),
-            limits=last_inputs.get("limits", {"min": {}, "max": {}}),
-            requirements=last_inputs.get("requirements", {}),
-            ratios=last_inputs.get("ratios", []),
-            result=result,
-            app_version="1.0.0",
-            solver_engine="DietFormulator",
-            solver_version="1.0.0",
-        )
+    if st.button("Construir entregables", key="aves_build_entregables_btn", type="primary", use_container_width=True):
+        try:
+            payload = build_scenario_payload(
+                scenario_name=scenario_name,
+                species="Aves",
+                stage=last_inputs.get("stage", "Sin etapa"),
+                user=usuario,
+                ingredients_df=ingredients_df,
+                selected_ingredients=last_inputs.get("selected_ingredients", []),
+                limits=last_inputs.get("limits", {"min": {}, "max": {}}),
+                requirements=last_inputs.get("requirements", {}),
+                ratios=last_inputs.get("ratios", []),
+                result=result,
+                app_version="1.0.0",
+                solver_engine="DietFormulator",
+                solver_version="1.0.0",
+            )
 
-        st.session_state["aves_built_scenario_payload"] = payload
-        st.success("Escenario técnico construido correctamente.")
+            html_content = build_client_report_html(payload)
 
-    payload = st.session_state.get("aves_built_scenario_payload")
-    if payload:
-        scenario_json = scenario_to_json(payload)
-        st.download_button(
-            label="Descargar escenario (.json)",
-            data=scenario_json,
-            file_name=f"{payload.get('scenario_name', 'scenario')}.json",
-            mime="application/json",
-            key="aves_download_scenario_json_btn",
-        )
+            st.session_state["aves_scenario_payload"] = payload
+            st.session_state["aves_report_html"] = html_content
 
-        with st.expander("Previsualizar escenario técnico (JSON)", expanded=False):
-            st.code(scenario_json, language="json")
+            st.success("✅ Entregables construidos correctamente.")
+        except Exception as e:
+            render_card("Error construyendo entregables", str(e), variant="danger")
+            return
+
+    payload = st.session_state.get("aves_scenario_payload")
+    html_content = st.session_state.get("aves_report_html")
+
+    if payload and html_content:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            zip_buffer = export_scenario_zip(payload, html_content, payload.get("scenario_name"))
+            st.download_button(
+                label="📦 Descargar entregables (ZIP)",
+                data=zip_buffer,
+                file_name=f"{payload.get('scenario_name', 'escenario')}.zip",
+                mime="application/zip",
+                key="aves_download_entregables_zip",
+                use_container_width=True,
+            )
+
+        with col2:
+            st.download_button(
+                label="📄 Descargar informe (HTML)",
+                data=html_content,
+                file_name=f"{payload.get('scenario_name', 'informe')}.html",
+                mime="text/html",
+                key="aves_download_informe_html",
+                use_container_width=True,
+            )
+
+        with st.expander("🔧 Opciones avanzadas (técnico / comparación)", expanded=False):
+            st.caption("El JSON técnico se usa para comparación entre dietas y análisis profundos.")
+
+            scenario_json = scenario_to_json(payload)
+            st.download_button(
+                label="📋 Descargar JSON técnico",
+                data=scenario_json,
+                file_name=f"{payload.get('scenario_name', 'scenario')}.json",
+                mime="application/json",
+                key="aves_download_scenario_json",
+                use_container_width=True,
+            )
+
+            if st.checkbox("Ver JSON técnico", key="aves_show_json_checkbox"):
+                st.code(scenario_json, language="json")
 
 
 def render():
