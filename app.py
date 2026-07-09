@@ -88,7 +88,10 @@ module = render_sidebar_navigation(user)
 top_col1, top_col2 = st.columns([6, 1])
 with top_col1:
     st.markdown(
-@@ -92,47 +72,37 @@
+        f"<div style='text-align:right'>👤 Usuario: <b>{st.session_state.get('usuario','')}</b></div>",
+        unsafe_allow_html=True,
+    )
+with top_col2:
     if st.button("Salir", key="btn_logout_top"):
         logout()
 
