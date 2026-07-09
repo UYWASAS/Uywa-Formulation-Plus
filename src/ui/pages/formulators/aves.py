@@ -24,10 +24,41 @@ from src.ui.components.cards import render_card
 # Helpers
 # -------------------------------------------------------------------
 
+META_COLUMNS = {
+    "ingrediente",
+    "ingredient",
+    "nombre",
+    "name",
+    "precio",
+    "price",
+    "costo",
+    "cost",
+    "unidad",
+    "unit",
+    "categoria",
+    "category",
+    "grupo",
+    "tipo",
+    "origen",
+    "fuente",
+    "observacion",
+    "observaciones",
+    "nota",
+    "notas",
+    "codigo",
+    "código",
+    "id",
+}
+
+
 def _safe_float(v, default=0.0):
     try:
+        if pd.isna(v):
+            return default
         if isinstance(v, str):
-            v = v.replace(",", ".")
+            v = v.replace(",", ".").strip()
+            if v == "":
+                return default
         return float(v)
     except Exception:
         return default
@@ -38,10 +69,79 @@ def _normalize_bound(v):
     return x if x > 0 else 0.0
 
 
+def _clean_key_name(value) -> str:
+    return str(value).strip().lower()
+
+
+def _sanitize_session_list(key: str, valid_options: list, fallback: list | None = None) -> list:
+    """Mantiene un multiselect consistente cuando cambian matriz, preset o ZIP restaurado."""
+    fallback = fallback or []
+    valid_set = set(valid_options)
+    current = st.session_state.get(key, None)
+
+    if current is None:
+        cleaned = [x for x in fallback if x in valid_set]
+    else:
+        if isinstance(current, str):
+            current = [current]
+        cleaned = [x for x in list(current) if x in valid_set]
+        if not cleaned and fallback:
+            cleaned = [x for x in fallback if x in valid_set]
+
+    st.session_state[key] = cleaned
+    return cleaned
+
+
+def _get_available_nutrients(df: pd.DataFrame) -> list:
+    """
+    Devuelve todos los nutrientes realmente disponibles en la matriz activa.
+    Combina la función existente del proyecto con una detección robusta de columnas numéricas.
+    """
+    if df is None or df.empty:
+        return []
+
+    candidates = []
+
+    try:
+        candidates.extend(get_nutrient_list(df) or [])
+    except Exception:
+        pass
+
+    for col in df.columns:
+        col_str = str(col).strip()
+        if not col_str:
+            continue
+        if _clean_key_name(col_str) in META_COLUMNS:
+            continue
+
+        series = pd.to_numeric(df[col], errors="coerce")
+        # Se acepta como nutriente si tiene al menos un valor numérico válido.
+        if series.notna().sum() > 0:
+            candidates.append(col_str)
+
+    # Mantener orden de aparición en la matriz, agregando al final nutrientes externos válidos.
+    ordered = []
+    seen = set()
+    for col in df.columns:
+        col_str = str(col).strip()
+        if col_str in candidates and col_str not in seen:
+            ordered.append(col_str)
+            seen.add(col_str)
+
+    for n in candidates:
+        if n not in seen:
+            ordered.append(n)
+            seen.add(n)
+
+    return ordered
+
+
 def _load_ingredients_robust(uploaded_file=None):
     if uploaded_file is not None:
         df = load_ingredients(uploaded_file)
         if df is not None and not df.empty:
+            st.session_state["aves_loaded_ingredients_df"] = df.copy()
+            st.session_state["ingredients_df"] = df.copy()
             return df.copy()
 
     cached = st.session_state.get("aves_loaded_ingredients_df")
@@ -56,6 +156,8 @@ def _load_ingredients_robust(uploaded_file=None):
         if os.path.exists(p_csv):
             df = pd.read_csv(p_csv)
             if not df.empty:
+                st.session_state["aves_loaded_ingredients_df"] = df.copy()
+                st.session_state["ingredients_df"] = df.copy()
                 return df.copy()
     except Exception:
         pass
@@ -64,6 +166,8 @@ def _load_ingredients_robust(uploaded_file=None):
         if os.path.exists(p_xlsx):
             df = pd.read_excel(p_xlsx)
             if not df.empty:
+                st.session_state["aves_loaded_ingredients_df"] = df.copy()
+                st.session_state["ingredients_df"] = df.copy()
                 return df.copy()
     except Exception:
         pass
@@ -138,7 +242,7 @@ def _create_project_zip_export(
     min_limits=None,
     max_limits=None,
     ratios=None,
-    nutrientes_seleccionados=None
+    nutrientes_seleccionados=None,
 ):
     min_limits = min_limits or {}
     max_limits = max_limits or {}
@@ -165,7 +269,7 @@ def _create_project_zip_export(
             "etapa": etapa,
             "usuario": usuario,
             "fecha": date.today().isoformat(),
-            "version": "aves-modular-full-2.0",
+            "version": "aves-modular-full-2.1",
             "nutrientes_seleccionados": nutrientes_seleccionados,
         }, indent=2, ensure_ascii=False))
 
@@ -174,38 +278,41 @@ def _create_project_zip_export(
 
 
 def _load_project_zip(uploaded_zip):
-    with zipfile.ZipFile(uploaded_zip, "r") as zf:
-        names = set(zf.namelist())
-        required = {"ingredients.csv", "requirements.csv", "project_metadata.json"}
-        missing = required - names
-        if missing:
-            return None, [f"Faltan archivos obligatorios en ZIP: {', '.join(sorted(missing))}"]
+    try:
+        with zipfile.ZipFile(uploaded_zip, "r") as zf:
+            names = set(zf.namelist())
+            required = {"ingredients.csv", "requirements.csv", "project_metadata.json"}
+            missing = required - names
+            if missing:
+                return None, [f"Faltan archivos obligatorios en ZIP: {', '.join(sorted(missing))}"]
 
-        with zf.open("ingredients.csv") as f:
-            ingredients_df = pd.read_csv(f)
-        with zf.open("requirements.csv") as f:
-            requirements_df = pd.read_csv(f)
-        with zf.open("project_metadata.json") as f:
-            metadata = json.load(f)
+            with zf.open("ingredients.csv") as f:
+                ingredients_df = pd.read_csv(f)
+            with zf.open("requirements.csv") as f:
+                requirements_df = pd.read_csv(f)
+            with zf.open("project_metadata.json") as f:
+                metadata = json.load(f)
 
-        limits = {"min_limits": {}, "max_limits": {}}
-        ratios = []
+            limits = {"min_limits": {}, "max_limits": {}}
+            ratios = []
 
-        if "ingredient_limits.json" in names:
-            with zf.open("ingredient_limits.json") as f:
-                limits = json.load(f)
+            if "ingredient_limits.json" in names:
+                with zf.open("ingredient_limits.json") as f:
+                    limits = json.load(f)
 
-        if "ratios.json" in names:
-            with zf.open("ratios.json") as f:
-                ratios = json.load(f)
+            if "ratios.json" in names:
+                with zf.open("ratios.json") as f:
+                    ratios = json.load(f)
 
-        return {
-            "ingredients_df": ingredients_df,
-            "requirements_df": requirements_df,
-            "metadata": metadata,
-            "limits": limits,
-            "ratios": ratios,
-        }, []
+            return {
+                "ingredients_df": ingredients_df,
+                "requirements_df": requirements_df,
+                "metadata": metadata,
+                "limits": limits,
+                "ratios": ratios,
+            }, []
+    except Exception as e:
+        return None, [f"Error leyendo ZIP de proyecto: {str(e)}"]
 
 
 # -------------------------------------------------------------------
@@ -242,10 +349,13 @@ def render_formulation_aves():
                         req_data[n] = {"min": mn, "max": mx}
                         nutr_loaded.append(n)
 
+                meta_nutrients = data.get("metadata", {}).get("nutrientes_seleccionados", []) or []
+                selected_restored = list(dict.fromkeys([*meta_nutrients, *nutr_loaded]))
+
                 st.session_state["aves_req_input"] = req_data
-                st.session_state["aves_nutrients_selected"] = nutr_loaded
-                st.session_state["aves_min_limits_loaded"] = data["limits"].get("min_limits", {})
-                st.session_state["aves_max_limits_loaded"] = data["limits"].get("max_limits", {})
+                st.session_state["aves_nutrients_selected"] = selected_restored
+                st.session_state["aves_min_limits_loaded"] = data.get("limits", {}).get("min_limits", {})
+                st.session_state["aves_max_limits_loaded"] = data.get("limits", {}).get("max_limits", {})
                 st.session_state["aves_ratios"] = data.get("ratios", [])
 
                 idf = data["ingredients_df"]
@@ -270,44 +380,51 @@ def render_formulation_aves():
     df = df.copy()
     df["Ingrediente"] = df["Ingrediente"].astype(str)
     df["precio"] = pd.to_numeric(df["precio"], errors="coerce").fillna(0)
+    st.session_state["aves_loaded_ingredients_df"] = df.copy()
 
     # ------------------- SELECCIÓN DE INGREDIENTES -------------------
     render_section("Selección de ingredientes", "Selecciona ingredientes y límites de inclusión.")
-    ing_all = df["Ingrediente"].dropna().tolist()
+    ing_all = df["Ingrediente"].dropna().astype(str).tolist()
     pre = st.session_state.get("aves_ingredientes_sel", ing_all[: min(25, len(ing_all))])
+    pre = [i for i in pre if i in ing_all]
+    _sanitize_session_list("aves_ingredientes_sel", ing_all, pre)
+
     ingredientes_sel = st.multiselect(
         "Ingredientes a usar",
         ing_all,
-        default=[i for i in pre if i in ing_all],
-        key="aves_ingredientes_sel"
+        key="aves_ingredientes_sel",
     )
     if not ingredientes_sel:
+        st.info("Selecciona al menos un ingrediente.")
         return
 
     df_sel = df[df["Ingrediente"].isin(ingredientes_sel)].copy()
     with st.expander("Ver o editar composición de ingredientes seleccionados", expanded=False):
         df_sel = st.data_editor(df_sel, use_container_width=True, num_rows="dynamic", key="aves_df_editor")
+        df_sel["Ingrediente"] = df_sel["Ingrediente"].astype(str)
+        df_sel["precio"] = pd.to_numeric(df_sel["precio"], errors="coerce").fillna(0)
+
+    st.session_state["ingredients_df"] = df_sel.copy()
 
     # -------- Descargar / Cargar matriz seleccionada --------
     with st.expander("Descargar o cargar matriz de ingredientes", expanded=False):
         c1, c2 = st.columns(2)
 
         with c1:
-            if st.button("Preparar descarga de matriz actual", key="aves_btn_prepare_matrix_csv"):
-                csv_content = _create_ingredients_csv(df_sel)
-                st.download_button(
-                    label="Descargar matriz seleccionada (CSV)",
-                    data=csv_content,
-                    file_name=f"aves_matriz_seleccionada_{date.today().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
-                    key="aves_download_matrix_csv"
-                )
+            st.download_button(
+                label="Descargar matriz seleccionada (CSV)",
+                data=_create_ingredients_csv(df_sel),
+                file_name=f"aves_matriz_seleccionada_{date.today().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                key="aves_download_matrix_csv",
+                use_container_width=True,
+            )
 
         with c2:
             up_ing_csv = st.file_uploader(
                 "Cargar matriz guardada (CSV)",
                 type=["csv"],
-                key="aves_upload_matrix_saved_csv"
+                key="aves_upload_matrix_saved_csv",
             )
             if up_ing_csv is not None and st.button("Aplicar matriz cargada", key="aves_apply_loaded_matrix_csv"):
                 found, df_loaded, errs = _load_ingredients_csv(up_ing_csv, df)
@@ -316,15 +433,17 @@ def render_formulation_aves():
                         st.warning(e)
                 if found:
                     st.session_state["aves_ingredientes_sel"] = found
+                    st.session_state["ingredients_df"] = df_loaded.copy()
                     st.success(f"Se cargaron {len(found)} ingredientes.")
                     st.rerun()
 
     # ------------------- LÍMITES -------------------
+    valid_limit_default = [x for x in st.session_state.get("aves_ingredientes_limitar", []) if x in ingredientes_sel]
+    _sanitize_session_list("aves_ingredientes_limitar", ingredientes_sel, valid_limit_default)
     ing_limit = st.multiselect(
         "Ingredientes con límites",
         ingredientes_sel,
-        default=st.session_state.get("aves_ingredientes_limitar", []),
-        key="aves_ingredientes_limitar"
+        key="aves_ingredientes_limitar",
     )
 
     min_limits, max_limits = {}, {}
@@ -337,11 +456,11 @@ def render_formulation_aves():
         max_v = c[1].number_input(
             "max", min_value=0.0, max_value=100.0,
             value=float(max_loaded.get(ing, 100.0)),
-            key=f"aves_max_{ing}", label_visibility="collapsed"
+            key=f"aves_max_{ing}", label_visibility="collapsed",
         )
         min_v = c[2].text_input(
             "min", value=str(min_loaded.get(ing, "")),
-            key=f"aves_min_{ing}", label_visibility="collapsed"
+            key=f"aves_min_{ing}", label_visibility="collapsed",
         )
         min_limits[ing] = _safe_float(min_v, 0)
         max_limits[ing] = _safe_float(max_v, 0)
@@ -361,61 +480,70 @@ def render_formulation_aves():
 
     etapa = st.selectbox("Etapa (Aves)", etapas_aves, index=etapas_aves.index(etapa_default), key="aves_etapa")
 
-    nutrients_all = get_nutrient_list(df_sel)  # <-- TODOS los nutrientes de la matriz
-    preset = get_stage_preset("Aves", etapa)
+    nutrients_all = _get_available_nutrients(df_sel)
+    preset = get_stage_preset("Aves", etapa) or {}
     preset_compat = [n for n in preset.keys() if n in nutrients_all]
 
-    if st.button("Cargar preset completo", key="aves_load_preset"):
-        st.session_state["aves_nutrients_selected"] = preset_compat.copy()
-        req_data = {}
-        for n in preset_compat:
-            req_data[n] = {
-                "min": _normalize_bound(preset.get(n, {}).get("min", 0)),
-                "max": _normalize_bound(preset.get(n, {}).get("max", 0)),
-            }
-        st.session_state["aves_req_input"] = req_data
-        st.success("Preset cargado. Puedes agregar más nutrientes manualmente.")
-        st.rerun()
+    c_preset, c_clear = st.columns([2, 1])
+    with c_preset:
+        if st.button("Cargar preset completo", key="aves_load_preset", use_container_width=True):
+            st.session_state["aves_nutrients_selected"] = preset_compat.copy()
+            req_data = {}
+            for n in preset_compat:
+                req_data[n] = {
+                    "min": _normalize_bound(preset.get(n, {}).get("min", 0)),
+                    "max": _normalize_bound(preset.get(n, {}).get("max", 0)),
+                }
+            st.session_state["aves_req_input"] = req_data
+            st.success("Preset cargado. Puedes agregar más nutrientes manualmente desde la matriz activa.")
+            st.rerun()
+    with c_clear:
+        if st.button("Limpiar nutrientes", key="aves_clear_nutrients", use_container_width=True):
+            st.session_state["aves_nutrients_selected"] = []
+            st.session_state["aves_req_input"] = {}
+            st.rerun()
 
-    # CARGA DE REQUERIMIENTOS CSV
     up_req = st.file_uploader("Cargar requerimientos desde archivo CSV", type=["csv"], key="aves_upload_req_csv")
     if up_req is not None and st.button("Aplicar requerimientos CSV", key="aves_apply_req_csv"):
         req_loaded, err = _load_requirements_csv(up_req)
         if err:
             st.error(err)
         else:
-            # solo mantener nutrientes que existan en matriz actual
-            req_filtered = {
-                n: v for n, v in req_loaded["requirements"].items()
-                if n in nutrients_all
-            }
+            req_filtered = {n: v for n, v in req_loaded["requirements"].items() if n in nutrients_all}
+            ignored = [n for n in req_loaded["requirements"].keys() if n not in nutrients_all]
             st.session_state["aves_req_input"] = req_filtered
             st.session_state["aves_nutrients_selected"] = list(req_filtered.keys())
+            if ignored:
+                st.warning("Nutrientes ignorados porque no existen en la matriz activa: " + ", ".join(ignored))
             st.success(f"Requerimientos cargados: {len(req_filtered)} nutrientes aplicados.")
             st.rerun()
 
+    restored_or_current = st.session_state.get("aves_nutrients_selected", [])
+    default_nutrients = restored_or_current if restored_or_current else preset_compat[: min(14, len(preset_compat))]
+    _sanitize_session_list("aves_nutrients_selected", nutrients_all, default_nutrients)
+
     selected_nutrients = st.multiselect(
         "Nutrientes a considerar",
-        nutrients_all,  # <-- abierto a todos los nutrientes detectados
-        default=[n for n in st.session_state.get("aves_nutrients_selected", preset_compat[:min(14, len(preset_compat))]) if n in nutrients_all],
+        nutrients_all,
         key="aves_nutrients_selected",
-        help="El preset solo preselecciona. Aquí puedes usar cualquier nutriente presente en la matriz actual."
+        help="El preset solo preselecciona. Aquí puedes usar cualquier nutriente presente en la matriz actual.",
     )
 
     if not selected_nutrients:
         st.info("Selecciona al menos un nutriente.")
         return
 
-    current_req_input = st.session_state.get("aves_req_input", {})
+    current_req_input = st.session_state.get("aves_req_input", {}) or {}
     req_input_clean = {}
     for n in selected_nutrients:
+        preset_min = _normalize_bound(preset.get(n, {}).get("min", 0)) if n in preset else 0.0
+        preset_max = _normalize_bound(preset.get(n, {}).get("max", 0)) if n in preset else 0.0
         req_input_clean[n] = {
-            "min": _normalize_bound(current_req_input.get(n, {}).get("min", 0)),
-            "max": _normalize_bound(current_req_input.get(n, {}).get("max", 0)),
+            "min": _normalize_bound(current_req_input.get(n, {}).get("min", preset_min)),
+            "max": _normalize_bound(current_req_input.get(n, {}).get("max", preset_max)),
         }
     st.session_state["aves_req_input"] = req_input_clean
 
-    # Tabla editable min/max
     req_rows = []
     for n in selected_nutrients:
         req_rows.append({
@@ -425,31 +553,42 @@ def render_formulation_aves():
         })
 
     with st.form("aves_req_form"):
-        df_req_edit = st.data_editor(pd.DataFrame(req_rows), use_container_width=True, hide_index=True, key="aves_req_editor")
+        df_req_edit = st.data_editor(
+            pd.DataFrame(req_rows),
+            use_container_width=True,
+            hide_index=True,
+            key="aves_req_editor",
+        )
         save_req_btn = st.form_submit_button("Guardar cambios en requerimientos", type="primary")
 
     if save_req_btn:
         new_req = {}
+        selected_from_editor = []
         for _, r in df_req_edit.iterrows():
-            n = r["Nutriente"]
+            n = str(r.get("Nutriente", "")).strip()
+            if not n or n not in nutrients_all:
+                continue
+            selected_from_editor.append(n)
             new_req[n] = {
-                "min": _normalize_bound(r["Min"]) if pd.notna(r["Min"]) else 0.0,
-                "max": _normalize_bound(r["Max"]) if pd.notna(r["Max"]) else 0.0,
+                "min": _normalize_bound(r.get("Min", 0)),
+                "max": _normalize_bound(r.get("Max", 0)),
             }
         st.session_state["aves_req_input"] = new_req
+        st.session_state["aves_nutrients_selected"] = selected_from_editor
         st.success("Requerimientos actualizados.")
+        st.rerun()
 
-    # Descarga requerimientos editados
     req_csv = _create_requirements_csv("Aves", etapa, st.session_state.get("aves_req_input", {}))
     st.download_button(
         "Descargar requerimientos editados (CSV)",
         data=req_csv,
-        file_name=f"aves_requerimientos_{etapa.replace(' ','_')}_{date.today().strftime('%Y%m%d')}.csv",
+        file_name=f"aves_requerimientos_{etapa.replace(' ', '_')}_{date.today().strftime('%Y%m%d')}.csv",
         mime="text/csv",
-        key="aves_download_req_csv"
+        key="aves_download_req_csv",
+        use_container_width=True,
     )
 
-    # Ratios
+    # ------------------- RATIOS -------------------
     if "aves_ratios" not in st.session_state:
         st.session_state["aves_ratios"] = []
 
@@ -463,9 +602,15 @@ def render_formulation_aves():
             val = c4.number_input("Valor", min_value=0.0, value=1.0, step=0.01, key="aves_ratio_val")
             if st.button("Agregar ratio", key="aves_ratio_add"):
                 st.session_state["aves_ratios"].append({
-                    "numerador": num, "denominador": den, "operador": op, "valor": float(val)
+                    "numerador": num, "denominador": den, "operador": op, "valor": float(val),
                 })
                 st.rerun()
+
+        ratios_keep = []
+        for r in st.session_state.get("aves_ratios", []):
+            if r.get("numerador") in selected_nutrients and r.get("denominador") in selected_nutrients:
+                ratios_keep.append(r)
+        st.session_state["aves_ratios"] = ratios_keep
 
         if st.session_state["aves_ratios"]:
             for i, r in enumerate(st.session_state["aves_ratios"]):
@@ -547,6 +692,7 @@ def render_formulation_aves():
                 "requirements": st.session_state["aves_req_input"],
                 "ratios": ratios_active,
                 "stage": etapa,
+                "selected_nutrients": list(selected_nutrients),
             }
 
             if result.get("success"):
@@ -561,27 +707,27 @@ def render_formulation_aves():
     project_name = st.text_input(
         "Nombre del proyecto",
         value=f"Aves_{etapa}_{date.today().strftime('%Y%m%d')}".replace(" ", "_"),
-        key="aves_project_name"
+        key="aves_project_name",
     )
 
-    if st.button("Preparar ZIP", key="aves_prepare_project_zip", use_container_width=True):
-        zip_buffer = _create_project_zip_export(
-            ingredientes_df=df_sel,
-            req_data=st.session_state.get("aves_req_input", {}),
-            etapa=etapa,
-            usuario=st.session_state.get("usuario", "usuario"),
-            min_limits=min_limits,
-            max_limits=max_limits,
-            ratios=ratios_active,
-            nutrientes_seleccionados=selected_nutrients,
-        )
-        st.download_button(
-            "Descargar proyecto completo (ZIP)",
-            data=zip_buffer,
-            file_name=f"{project_name}.zip",
-            mime="application/zip",
-            key="aves_download_project_zip",
-        )
+    zip_buffer = _create_project_zip_export(
+        ingredientes_df=df_sel,
+        req_data=st.session_state.get("aves_req_input", {}),
+        etapa=etapa,
+        usuario=st.session_state.get("usuario", "usuario"),
+        min_limits=min_limits,
+        max_limits=max_limits,
+        ratios=ratios_active,
+        nutrientes_seleccionados=selected_nutrients,
+    )
+    st.download_button(
+        "Descargar proyecto completo (ZIP)",
+        data=zip_buffer,
+        file_name=f"{project_name}.zip",
+        mime="application/zip",
+        key="aves_download_project_zip",
+        use_container_width=True,
+    )
 
 
 # -------------------------------------------------------------------
@@ -613,8 +759,8 @@ def render_report_tab():
     st.success("Informe listo para exportar")
     cost_100kg = result.get("cost", 0)
     st.write(f"**Costo total (100kg):** ${cost_100kg:.2f}")
-    st.write(f"**Costo/kg:** ${cost_100kg/100:.2f}")
-    st.write(f"**Costo/ton:** ${cost_100kg/100*1000:,.2f}")
+    st.write(f"**Costo/kg:** ${cost_100kg / 100:.2f}")
+    st.write(f"**Costo/ton:** ${cost_100kg / 100 * 1000:,.2f}")
     st.write(f"**Ingredientes activos:** {len(result.get('diet', {}))}")
 
     render_section("Entregables", "Descarga informe cliente (HTML) y paquete técnico (ZIP/JSON).")
@@ -650,7 +796,7 @@ def render_report_tab():
 
             st.session_state["aves_scenario_payload"] = payload
             st.session_state["aves_report_html"] = html_content
-            st.success("✅ Entregables construidos correctamente.")
+            st.success("Entregables construidos correctamente.")
         except Exception as e:
             render_card("Error construyendo entregables", str(e), variant="danger")
             return
@@ -664,7 +810,7 @@ def render_report_tab():
         with c1:
             zip_buffer = export_scenario_zip(payload, html_content, payload.get("scenario_name"))
             st.download_button(
-                label="📦 Descargar entregables (ZIP)",
+                label="Descargar entregables (ZIP)",
                 data=zip_buffer,
                 file_name=f"{payload.get('scenario_name', 'escenario')}.zip",
                 mime="application/zip",
@@ -674,7 +820,7 @@ def render_report_tab():
 
         with c2:
             st.download_button(
-                label="📄 Descargar informe (HTML)",
+                label="Descargar informe (HTML)",
                 data=html_content,
                 file_name=f"{payload.get('scenario_name', 'informe')}.html",
                 mime="text/html",
@@ -682,12 +828,12 @@ def render_report_tab():
                 use_container_width=True,
             )
 
-        with st.expander("🔧 Opciones avanzadas (técnico / comparación)", expanded=False):
+        with st.expander("Opciones avanzadas (técnico / comparación)", expanded=False):
             st.caption("El JSON técnico se usa para comparación entre dietas y análisis profundos.")
             scenario_json = scenario_to_json(payload)
 
             st.download_button(
-                label="📋 Descargar JSON técnico",
+                label="Descargar JSON técnico",
                 data=scenario_json,
                 file_name=f"{payload.get('scenario_name', 'scenario')}.json",
                 mime="application/json",
