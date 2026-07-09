@@ -5,7 +5,10 @@
 
 import os
 import streamlit as st
-
+try:
+    from src.core.auth.service import USERS_DB, is_user_active
+except Exception:
+    from src.core.auth.policies import USERS_DB, is_user_active
 
 # ============================================================
 # CONFIGURACIÓN DE PÁGINA
