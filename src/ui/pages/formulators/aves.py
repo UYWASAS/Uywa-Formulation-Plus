@@ -10,6 +10,8 @@ from src.core.io.data_access import load_ingredients, get_nutrient_list
 from src.core.formulation.presets import get_stage_preset
 from src.adapters.optimization_adapter import OptimizationAdapter
 
+from src.core.scenarios.build_scenario import build_scenario_payload, scenario_to_json
+
 from src.ui.components.sections import render_section
 from src.ui.components.cards import render_card
 from src.ui.components.tables import render_table
@@ -474,8 +476,14 @@ def render_formulation_aves():
                 ratios=ratios_active,
             )
             st.session_state["last_result_aves"] = result
-            if result.get("success"):
-                st.session_state["ingredients_df"] = df_sel.copy()
+            st.session_state["ingredients_df"] = df_sel.copy()
+            st.session_state["aves_last_inputs"] = {
+                "selected_ingredients": list(df_sel["Ingrediente"].astype(str).tolist()),
+                "limits": {"min": min_limits, "max": max_limits},
+                "requirements": req_input_clean,
+                "ratios": ratios_active,
+                "stage": etapa,
+            }
             st.success("Formulación exitosa") if result.get("success") else st.error(result.get("message", "No se pudo formular"))
 
 
@@ -504,6 +512,52 @@ def render_report_tab():
     st.success("Informe rápido generado")
     st.write(f"**Costo total (100kg):** ${result.get('cost', 0):.2f}")
     st.write(f"**Ingredientes activos:** {len(result.get('diet', {}))}")
+
+    # --- Escenario técnico descargable ---
+    render_section("Escenario técnico", "Exporta un escenario estandarizado compatible para comparación futura.")
+
+    last_inputs = st.session_state.get("aves_last_inputs", {})
+    ingredients_df = st.session_state.get("ingredients_df", pd.DataFrame())
+
+    scenario_name = st.text_input(
+        "Nombre del escenario",
+        value=f"Aves_{last_inputs.get('stage', 'Etapa')}",
+        key="aves_report_scenario_name",
+    )
+
+    if st.button("Construir escenario técnico", key="aves_build_scenario_btn"):
+        payload = build_scenario_payload(
+            scenario_name=scenario_name,
+            species="Aves",
+            stage=last_inputs.get("stage", "Sin etapa"),
+            user=st.session_state.get("usuario", "usuario"),
+            ingredients_df=ingredients_df,
+            selected_ingredients=last_inputs.get("selected_ingredients", []),
+            limits=last_inputs.get("limits", {"min": {}, "max": {}}),
+            requirements=last_inputs.get("requirements", {}),
+            ratios=last_inputs.get("ratios", []),
+            result=result,
+            app_version="1.0.0",
+            solver_engine="DietFormulator",
+            solver_version="1.0.0",
+        )
+
+        st.session_state["aves_built_scenario_payload"] = payload
+        st.success("Escenario técnico construido correctamente.")
+
+    payload = st.session_state.get("aves_built_scenario_payload")
+    if payload:
+        scenario_json = scenario_to_json(payload)
+        st.download_button(
+            label="Descargar escenario (.json)",
+            data=scenario_json,
+            file_name=f"{payload.get('scenario_name', 'scenario')}.json",
+            mime="application/json",
+            key="aves_download_scenario_json_btn",
+        )
+
+        with st.expander("Previsualizar escenario técnico (JSON)", expanded=False):
+            st.code(scenario_json, language="json")
 
 
 def render():
