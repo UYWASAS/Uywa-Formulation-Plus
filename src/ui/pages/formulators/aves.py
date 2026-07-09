@@ -136,144 +136,6 @@ def _get_available_nutrients(df: pd.DataFrame) -> list:
     return ordered
 
 
-
-
-def _get_constraint_info(result: dict, nutrient: str) -> dict:
-    """Resume estado LP para un nutriente a partir de constraint_diagnostics."""
-    diag = (result or {}).get("constraint_diagnostics", {}) or {}
-    min_c = diag.get(f"Min_{nutrient}", {}) or {}
-    max_c = diag.get(f"Max_{nutrient}", {}) or {}
-    active_parts = []
-    slacks = []
-    if min_c:
-        active_parts.append("Min" if min_c.get("activa") else "Min no activa")
-        if min_c.get("slack") is not None:
-            slacks.append(_safe_float(min_c.get("slack"), 0))
-    if max_c:
-        active_parts.append("Max" if max_c.get("activa") else "Max no activa")
-        if max_c.get("slack") is not None:
-            slacks.append(_safe_float(max_c.get("slack"), 0))
-    return {
-        "Restricción activa": " / ".join(active_parts) if active_parts else "—",
-        "Slack": min([abs(x) for x in slacks], default=None),
-    }
-
-
-def _render_progress(min_val, max_val, obtained):
-    min_val = _normalize_bound(min_val)
-    max_val = _normalize_bound(max_val)
-    obtained = _safe_float(obtained, 0)
-    if min_val <= 0 and max_val <= 0:
-        return "—"
-    if min_val > 0:
-        pct = (obtained / min_val) * 100 if min_val else 0
-        if obtained + 1e-9 < min_val:
-            return f"❌ {pct:.1f}%"
-        if max_val > 0 and obtained > max_val + 1e-9:
-            return f"⚠️ {pct:.1f}%"
-        return f"✅ {pct:.1f}%"
-    if max_val > 0:
-        pct = (obtained / max_val) * 100
-        if obtained > max_val + 1e-9:
-            return f"⚠️ {pct:.1f}%"
-        return f"✅ {pct:.1f}%"
-    return "—"
-
-
-def _shadow_impact_pct(shadow_price, total_cost_100kg):
-    if shadow_price is None:
-        return "—", None
-    cost_per_kg = _safe_float(total_cost_100kg, 0) / 100.0
-    if cost_per_kg <= 0:
-        return "—", None
-    pct = abs(_safe_float(shadow_price, 0)) / cost_per_kg * 100.0
-    return f"{pct:.3f}%", pct
-
-
-def _marginal_cost_ton(shadow_price):
-    if shadow_price is None:
-        return "—"
-    return f"${abs(_safe_float(shadow_price, 0))*1000:.4f}/ton"
-
-
-def _impact_class(pct):
-    if pct is None:
-        return "Bajo"
-    if pct > 2:
-        return "Alto"
-    if pct >= 0.5:
-        return "Medio"
-    return "Bajo"
-
-
-def _get_limiting_ingredient(nutrient: str, diet_map: dict, df_sel: pd.DataFrame) -> str:
-    try:
-        if df_sel is None or df_sel.empty or nutrient not in df_sel.columns or "Ingrediente" not in df_sel.columns:
-            return "—"
-        aportes = {}
-        total = 0.0
-        for ing, pct in (diet_map or {}).items():
-            row = df_sel[df_sel["Ingrediente"].astype(str) == str(ing)]
-            if row.empty:
-                continue
-            val = _safe_float(pd.to_numeric(row.iloc[0].get(nutrient, 0), errors="coerce"), 0)
-            aporte = val * (_safe_float(pct, 0) / 100.0)
-            aportes[str(ing)] = aporte
-            total += aporte
-        if total <= 0 or not aportes:
-            return "—"
-        ing_top, aporte_top = max(aportes.items(), key=lambda x: x[1])
-        return f"{ing_top} ({(aporte_top / total) * 100:.0f}%)"
-    except Exception:
-        return "—"
-
-
-def _build_requirement_analysis_table(
-    nutrients: list,
-    req_input: dict,
-    preview_result: dict | None,
-    df_sel: pd.DataFrame,
-) -> pd.DataFrame:
-    rows = []
-    success = bool(preview_result and preview_result.get("success"))
-    for n in nutrients:
-        mn = _normalize_bound((req_input or {}).get(n, {}).get("min", 0))
-        mx = _normalize_bound((req_input or {}).get(n, {}).get("max", 0))
-        obtained = None
-        progress = "Sin preview"
-        impact_txt, impact_value = "—", None
-        marginal = "—"
-        impact_class = "—"
-        assoc = "—"
-        active = "—"
-        slack = None
-        if success:
-            obtained = _safe_float((preview_result or {}).get("nutritional_values", {}).get(n, 0), 0)
-            progress = _render_progress(mn, mx, obtained)
-            shadow_price = (preview_result or {}).get("shadow_prices", {}).get(n, None)
-            impact_txt, impact_value = _shadow_impact_pct(shadow_price, (preview_result or {}).get("cost", 0))
-            marginal = _marginal_cost_ton(shadow_price)
-            impact_class = _impact_class(impact_value)
-            assoc = _get_limiting_ingredient(n, (preview_result or {}).get("diet", {}), df_sel)
-            cinfo = _get_constraint_info(preview_result, n)
-            active = cinfo["Restricción activa"]
-            slack = cinfo["Slack"]
-        rows.append({
-            "Nutriente": n,
-            "Min": mn,
-            "Max": mx if mx > 0 else None,
-            "Obtenido": obtained,
-            "% Logrado": progress,
-            "Impacto relativo": impact_txt,
-            "Costo marginal": marginal,
-            "Impacto": impact_class,
-            "Ing. asociado": assoc,
-            "Restricción activa": active,
-            "Slack": slack,
-        })
-    return pd.DataFrame(rows)
-
-
 def _load_ingredients_robust(uploaded_file=None):
     if uploaded_file is not None:
         df = load_ingredients(uploaded_file)
@@ -622,41 +484,22 @@ def render_formulation_aves():
     preset = get_stage_preset("Aves", etapa) or {}
     preset_compat = [n for n in preset.keys() if n in nutrients_all]
 
-    c_preset, c_all, c_clear = st.columns([1.3, 1.5, 1])
+    c_preset, c_clear = st.columns([2, 1])
     with c_preset:
         if st.button("Cargar preset completo", key="aves_load_preset", use_container_width=True):
-            selected = preset_compat.copy()
+            st.session_state["aves_nutrients_selected"] = preset_compat.copy()
             req_data = {}
-            for n in selected:
+            for n in preset_compat:
                 req_data[n] = {
                     "min": _normalize_bound(preset.get(n, {}).get("min", 0)),
                     "max": _normalize_bound(preset.get(n, {}).get("max", 0)),
                 }
-            st.session_state["aves_nutrients_selected"] = selected
-            st.session_state["aves_nutrients_widget"] = selected
             st.session_state["aves_req_input"] = req_data
-            st.success("Preset cargado. Puedes agregar más nutrientes desde la matriz activa.")
+            st.success("Preset cargado. Puedes agregar más nutrientes manualmente desde la matriz activa.")
             st.rerun()
-
-    with c_all:
-        if st.button("Usar todos los nutrientes de la matriz", key="aves_use_all_matrix_nutrients", use_container_width=True):
-            current_req = st.session_state.get("aves_req_input", {}) or {}
-            req_data = {}
-            for n in nutrients_all:
-                req_data[n] = {
-                    "min": _normalize_bound(current_req.get(n, {}).get("min", preset.get(n, {}).get("min", 0) if n in preset else 0)),
-                    "max": _normalize_bound(current_req.get(n, {}).get("max", preset.get(n, {}).get("max", 0) if n in preset else 0)),
-                }
-            st.session_state["aves_nutrients_selected"] = list(nutrients_all)
-            st.session_state["aves_nutrients_widget"] = list(nutrients_all)
-            st.session_state["aves_req_input"] = req_data
-            st.success(f"Se cargaron {len(nutrients_all)} nutrientes detectados en la matriz.")
-            st.rerun()
-
     with c_clear:
         if st.button("Limpiar nutrientes", key="aves_clear_nutrients", use_container_width=True):
             st.session_state["aves_nutrients_selected"] = []
-            st.session_state["aves_nutrients_widget"] = []
             st.session_state["aves_req_input"] = {}
             st.rerun()
 
@@ -670,7 +513,6 @@ def render_formulation_aves():
             ignored = [n for n in req_loaded["requirements"].keys() if n not in nutrients_all]
             st.session_state["aves_req_input"] = req_filtered
             st.session_state["aves_nutrients_selected"] = list(req_filtered.keys())
-            st.session_state["aves_nutrients_widget"] = list(req_filtered.keys())
             if ignored:
                 st.warning("Nutrientes ignorados porque no existen en la matriz activa: " + ", ".join(ignored))
             st.success(f"Requerimientos cargados: {len(req_filtered)} nutrientes aplicados.")
@@ -678,26 +520,14 @@ def render_formulation_aves():
 
     restored_or_current = st.session_state.get("aves_nutrients_selected", [])
     default_nutrients = restored_or_current if restored_or_current else preset_compat[: min(14, len(preset_compat))]
-    sanitized_nutrients = _sanitize_session_list("aves_nutrients_selected", nutrients_all, default_nutrients)
-
-    if "aves_nutrients_widget" not in st.session_state or set(st.session_state.get("aves_nutrients_widget", [])) != set(sanitized_nutrients):
-        st.session_state["aves_nutrients_widget"] = sanitized_nutrients
+    _sanitize_session_list("aves_nutrients_selected", nutrients_all, default_nutrients)
 
     selected_nutrients = st.multiselect(
         "Nutrientes a considerar",
-        options=nutrients_all,
-        key="aves_nutrients_widget",
-        help="El preset solo preselecciona. Puedes buscar y seleccionar cualquier columna nutricional numérica de la matriz cargada.",
+        nutrients_all,
+        key="aves_nutrients_selected",
+        help="El preset solo preselecciona. Aquí puedes usar cualquier nutriente presente en la matriz actual.",
     )
-    selected_nutrients = [n for n in selected_nutrients if n in nutrients_all]
-    st.session_state["aves_nutrients_selected"] = list(selected_nutrients)
-
-    st.caption(
-        f"Nutrientes disponibles en la matriz: {len(nutrients_all)} | "
-        f"Nutrientes seleccionados: {len(selected_nutrients)}"
-    )
-    with st.expander("Ver nutrientes detectados en la matriz", expanded=False):
-        st.write(", ".join(nutrients_all) if nutrients_all else "No se detectaron nutrientes numéricos.")
 
     if not selected_nutrients:
         st.info("Selecciona al menos un nutriente.")
@@ -714,53 +544,20 @@ def render_formulation_aves():
         }
     st.session_state["aves_req_input"] = req_input_clean
 
-    ratios_for_preview = [
-        r for r in st.session_state.get("aves_ratios", [])
-        if r.get("numerador") in selected_nutrients
-        and r.get("denominador") in selected_nutrients
-        and r.get("numerador") != r.get("denominador")
-        and r.get("operador") in {">=", "<=", "="}
-        and _safe_float(r.get("valor", 0), 0) > 0
-    ]
-
-    preview = None
-    if any(_normalize_bound(v.get("min", 0)) > 0 or _normalize_bound(v.get("max", 0)) > 0 for v in req_input_clean.values()):
-        preview = OptimizationAdapter().solve(
-            ingredients_df=df_sel,
-            nutrient_list=selected_nutrients,
-            requirements=req_input_clean,
-            limits={"min": min_limits, "max": max_limits},
-            selected_species="Aves",
-            selected_stage=etapa,
-            ratios=ratios_for_preview,
-        )
-
-    st.markdown("### Tabla de requerimientos y análisis en vivo")
-    st.caption("Min y Max son editables. Las demás columnas son analíticas e informativas.")
-
-    df_req_table = _build_requirement_analysis_table(
-        nutrients=selected_nutrients,
-        req_input=req_input_clean,
-        preview_result=preview,
-        df_sel=df_sel,
-    )
+    req_rows = []
+    for n in selected_nutrients:
+        req_rows.append({
+            "Nutriente": n,
+            "Min": req_input_clean[n]["min"],
+            "Max": req_input_clean[n]["max"],
+        })
 
     with st.form("aves_req_form"):
         df_req_edit = st.data_editor(
-            df_req_table,
+            pd.DataFrame(req_rows),
             use_container_width=True,
             hide_index=True,
             key="aves_req_editor",
-            disabled=[
-                "Obtenido", "% Logrado", "Impacto relativo", "Costo marginal",
-                "Impacto", "Ing. asociado", "Restricción activa", "Slack",
-            ],
-            column_config={
-                "Min": st.column_config.NumberColumn("Min", step=0.0001, format="%.4f"),
-                "Max": st.column_config.NumberColumn("Max", step=0.0001, format="%.4f"),
-                "Obtenido": st.column_config.NumberColumn("Obtenido", format="%.4f"),
-                "Slack": st.column_config.NumberColumn("Slack", format="%.6f"),
-            },
         )
         save_req_btn = st.form_submit_button("Guardar cambios en requerimientos", type="primary")
 
@@ -776,10 +573,8 @@ def render_formulation_aves():
                 "min": _normalize_bound(r.get("Min", 0)),
                 "max": _normalize_bound(r.get("Max", 0)),
             }
-
         st.session_state["aves_req_input"] = new_req
         st.session_state["aves_nutrients_selected"] = selected_from_editor
-        st.session_state["aves_nutrients_widget"] = selected_from_editor
         st.success("Requerimientos actualizados.")
         st.rerun()
 
