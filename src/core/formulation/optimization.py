@@ -50,15 +50,52 @@ class DietFormulator:
         }
 
     def _get_min_max_bounds(self, ingredient_name):
-        min_inc = self._normalize_bound(
-            self.limits.get("min", {}).get(ingredient_name, 0)
-        ) / 100
-
+        """
+        min/max ingresan en % (0..100). Se convierten a fracción (0..1).
+        Reglas:
+        - min por defecto = 0
+        - max por defecto = 100
+        - max=0 explícito se interpreta como 100 (no restringido), para evitar bloqueos por UI vacía.
+        - clamp y consistencia min<=max
+        """
+        min_raw = self._normalize_bound(self.limits.get("min", {}).get(ingredient_name, 0))
         max_raw = self.limits.get("max", {}).get(ingredient_name, 100)
-        max_inc = self._normalize_bound(max_raw)
-        max_inc = max_inc / 100 if max_inc > 0 else 1
 
-        return min_inc, max_inc
+        # max robusto
+        try:
+            max_raw = float(max_raw)
+        except Exception:
+            max_raw = 100.0
+
+        if max_raw <= 0:
+            max_raw = 100.0  # no restringido
+
+        # clamp 0..100
+        min_raw = max(0.0, min(min_raw, 100.0))
+        max_raw = max(0.0, min(max_raw, 100.0))
+
+        # consistencia
+        if min_raw > max_raw:
+            min_raw = max_raw
+
+        return min_raw / 100.0, max_raw / 100.0
+
+    def _validate_limit_consistency(self):
+        if self.ingredients_df is None or self.ingredients_df.empty or "Ingrediente" not in self.ingredients_df.columns:
+            return None
+
+        total_min = 0.0
+        for i in self.ingredients_df.index:
+            ing_name = str(self.ingredients_df.loc[i, "Ingrediente"])
+            min_inc, max_inc = self._get_min_max_bounds(ing_name)
+            if min_inc - max_inc > 1e-12:
+                return f"Límite inválido: mínimo > máximo para ingrediente '{ing_name}'."
+            total_min += min_inc
+
+        if total_min > 1.0 + 1e-9:
+            return f"Suma de mínimos por ingrediente excede 100% ({total_min*100:.4f}%)."
+
+        return None
 
     def _calculate_theoretical_nutrient_bounds(self):
         diagnostics = []
@@ -105,6 +142,21 @@ class DietFormulator:
                 )
 
                 total_min_fixed += min_inc
+
+            if total_min_fixed > 1.0 + 1e-9:
+                diagnostics.append(
+                    {
+                        "nutriente": nutrient,
+                        "estado": "Posible inviabilidad por límites",
+                        "requerido_min": req_min,
+                        "requerido_max": req_max,
+                        "max_teorico": None,
+                        "min_teorico": None,
+                        "detalle": f"La suma de mínimos de inclusión excede 100% ({total_min_fixed*100:.4f}%).",
+                        "ingredientes_mayor_aporte": [],
+                    }
+                )
+                continue
 
             remaining_after_min = max(0.0, 1.0 - total_min_fixed)
 
@@ -204,6 +256,11 @@ class DietFormulator:
                     self.ingredients_df[nutrient] = pd.to_numeric(
                         self.ingredients_df[nutrient], errors="coerce"
                     ).fillna(0)
+
+            # validación temprana de límites
+            limit_error = self._validate_limit_consistency()
+            if limit_error:
+                return self._error_result(limit_error)
 
             preliminary_infeasibility = self._calculate_theoretical_nutrient_bounds()
 
@@ -326,7 +383,7 @@ class DietFormulator:
                 if amount > 1e-6:
                     ingredient_name = self.ingredients_df.loc[i, "Ingrediente"]
                     diet[ingredient_name] = round(amount, 4)
-                    total_cost += self.ingredients_df.loc[i, "precio"] * (amount / 100) * 100
+                    total_cost += self.ingredients_df.loc[i, "precio"] * amount
 
             total_cost = round(total_cost, 2)
 
