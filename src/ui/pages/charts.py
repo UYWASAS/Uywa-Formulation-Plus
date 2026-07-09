@@ -146,7 +146,6 @@ def render():
 
     ingredients_df = st.session_state.get(cfg["ingredients"])
     if ingredients_df is None or (isinstance(ingredients_df, pd.DataFrame) and ingredients_df.empty):
-        # fallback común
         ingredients_df = st.session_state.get("ingredients_df")
 
     nutrients_selected = st.session_state.get(cfg["selected_nutrients"], []) or list(nutritional_values.keys())
@@ -177,7 +176,6 @@ def render():
 
     tabs = st.tabs(["Costo por ingrediente", "Aporte a nutrientes", "Costo relativo por nutriente", "Cumplimiento"])
 
-    # TAB 1 - Costo por ingrediente
     with tabs[0]:
         render_section("Costo por ingrediente", "Participación de cada ingrediente en el costo total.")
 
@@ -198,7 +196,12 @@ def render():
             for x in df_formula["% Inclusión"]
         ]
 
-        chart_type = st.radio("Tipo de gráfico", ["Pastel", "Barras"], horizontal=True, key=f"charts_cost_type_{species}")
+        chart_type = st.radio(
+            "Tipo de gráfico",
+            ["Pastel", "Barras", "Barras horizontales"],
+            horizontal=True,
+            key=f"charts_cost_type_{species}",
+        )
 
         if chart_type == "Pastel":
             fig = go.Figure(
@@ -212,7 +215,7 @@ def render():
                 )
             )
             fig.update_layout(title=f"Participación de cada ingrediente en el costo total ({unit})")
-        else:
+        elif chart_type == "Barras":
             fig = go.Figure(
                 go.Bar(
                     x=df_formula["Ingrediente"],
@@ -230,6 +233,27 @@ def render():
                 yaxis_title=f"Costo aportado ({unit})",
                 template="simple_white",
                 showlegend=False,
+            )
+        else:
+            fig = go.Figure(
+                go.Bar(
+                    y=df_formula["Ingrediente"],
+                    x=costos,
+                    orientation="h",
+                    marker_color=[color_map[i] for i in df_formula["Ingrediente"]],
+                    text=[f"{v:.3f}" for v in costos],
+                    textposition="auto",
+                    customdata=proporciones,
+                    hovertemplate="%{y}<br>Costo: %{x:.3f} " + unit + "<br>Proporción dieta: %{customdata:.2f}%<extra></extra>",
+                )
+            )
+            fig.update_layout(
+                title=f"Costo total por ingrediente ({unit}) - horizontal",
+                xaxis_title=f"Costo aportado ({unit})",
+                yaxis_title="Ingrediente",
+                template="simple_white",
+                showlegend=False,
+                yaxis={"categoryorder": "total ascending"},
             )
 
         st.plotly_chart(fig, use_container_width=True)
@@ -253,7 +277,6 @@ def render():
         )
         st.caption(f"Costo total estimado: {suma_costos:.3f} {unit} | Solver: ${total_cost_ton:.2f}/ton")
 
-    # TAB 2 - Aporte a nutrientes
     with tabs[1]:
         render_section("Aporte a nutrientes", "Aporte de cada ingrediente a cada nutriente seleccionado.")
 
@@ -261,7 +284,6 @@ def render():
             st.info("No hay nutrientes seleccionados.")
         else:
             nutrient_tabs = st.tabs([n for n in nutrients_selected])
-
             units_ref = _default_units(nutrients_selected)
 
             for i, nut in enumerate(nutrients_selected):
@@ -285,29 +307,56 @@ def render():
                         aportes.append(ap)
                         total_nut += ap
 
-                    if total_nut > 0:
-                        props = [(x / total_nut) * 100 for x in aportes]
-                    else:
-                        props = [0 for _ in aportes]
+                    props = [(x / total_nut) * 100 for x in aportes] if total_nut > 0 else [0 for _ in aportes]
 
-                    fig = go.Figure(
-                        go.Bar(
-                            x=df_formula["Ingrediente"],
-                            y=aportes,
-                            marker_color=[color_map[i] for i in df_formula["Ingrediente"]],
-                            text=[f"{x:.3f}" for x in aportes],
-                            textposition="auto",
-                            customdata=props,
-                            hovertemplate="%{x}<br>Aporte: %{y:.3f} " + label + "<br>Proporción aporte: %{customdata:.2f}%<extra></extra>",
+                    chart_type = st.radio(
+                        f"Tipo de gráfico para {nut}",
+                        ["Barras", "Barras horizontales"],
+                        horizontal=True,
+                        key=f"charts_aporte_type_{species}_{nut}",
+                    )
+
+                    if chart_type == "Barras":
+                        fig = go.Figure(
+                            go.Bar(
+                                x=df_formula["Ingrediente"],
+                                y=aportes,
+                                marker_color=[color_map[i] for i in df_formula["Ingrediente"]],
+                                text=[f"{x:.3f}" for x in aportes],
+                                textposition="auto",
+                                customdata=props,
+                                hovertemplate="%{x}<br>Aporte: %{y:.3f} " + label + "<br>Proporción aporte: %{customdata:.2f}%<extra></extra>",
+                            )
                         )
-                    )
-                    fig.update_layout(
-                        title=f"Aporte de cada ingrediente a {nut}",
-                        xaxis_title="Ingrediente",
-                        yaxis_title=f"Aporte de {nut} ({label})",
-                        template="simple_white",
-                        showlegend=False,
-                    )
+                        fig.update_layout(
+                            title=f"Aporte de cada ingrediente a {nut}",
+                            xaxis_title="Ingrediente",
+                            yaxis_title=f"Aporte de {nut} ({label})",
+                            template="simple_white",
+                            showlegend=False,
+                        )
+                    else:
+                        fig = go.Figure(
+                            go.Bar(
+                                y=df_formula["Ingrediente"],
+                                x=aportes,
+                                orientation="h",
+                                marker_color=[color_map[i] for i in df_formula["Ingrediente"]],
+                                text=[f"{x:.3f}" for x in aportes],
+                                textposition="auto",
+                                customdata=props,
+                                hovertemplate="%{y}<br>Aporte: %{x:.3f} " + label + "<br>Proporción aporte: %{customdata:.2f}%<extra></extra>",
+                            )
+                        )
+                        fig.update_layout(
+                            title=f"Aporte de cada ingrediente a {nut} (horizontal)",
+                            xaxis_title=f"Aporte de {nut} ({label})",
+                            yaxis_title="Ingrediente",
+                            template="simple_white",
+                            showlegend=False,
+                            yaxis={"categoryorder": "total ascending"},
+                        )
+
                     st.plotly_chart(fig, use_container_width=True)
 
                     df_ap = pd.DataFrame({
@@ -327,7 +376,6 @@ def render():
                         },
                     )
 
-    # TAB 3 - Costo relativo por nutriente
     with tabs[2]:
         render_section("Costo relativo por nutriente", "Compara el costo de obtener una unidad de nutriente desde cada ingrediente.")
 
@@ -364,28 +412,57 @@ def render():
                     arr = np.array([v if pd.notnull(v) else np.inf for v in costs_per_unit], dtype=float)
                     best_idx = None if np.all(np.isinf(arr)) else int(np.nanargmin(arr))
 
+                    chart_type = st.radio(
+                        f"Tipo de gráfico para {nut}",
+                        ["Barras", "Barras horizontales"],
+                        horizontal=True,
+                        key=f"charts_relcost_type_{species}_{nut}",
+                    )
+
                     colors = [
                         "#2ca25f" if (best_idx is not None and idx == best_idx) else "#2176ff"
                         for idx in range(len(costs_per_unit))
                     ]
 
-                    fig = go.Figure(
-                        go.Bar(
-                            x=df_formula["Ingrediente"],
-                            y=[v if pd.notnull(v) else 0 for v in costs_per_unit],
-                            marker_color=colors,
-                            text=[f"{v:.4f}" if pd.notnull(v) else "" for v in costs_per_unit],
-                            textposition="auto",
-                            hovertemplate="%{x}<br>Costo relativo: %{y:.6f} " + label + "<extra></extra>",
+                    if chart_type == "Barras":
+                        fig = go.Figure(
+                            go.Bar(
+                                x=df_formula["Ingrediente"],
+                                y=[v if pd.notnull(v) else 0 for v in costs_per_unit],
+                                marker_color=colors,
+                                text=[f"{v:.4f}" if pd.notnull(v) else "" for v in costs_per_unit],
+                                textposition="auto",
+                                hovertemplate="%{x}<br>Costo relativo: %{y:.6f} " + label + "<extra></extra>",
+                            )
                         )
-                    )
-                    fig.update_layout(
-                        title=f"Costo relativo por unidad de {nut}",
-                        xaxis_title="Ingrediente",
-                        yaxis_title=label,
-                        template="simple_white",
-                        showlegend=False,
-                    )
+                        fig.update_layout(
+                            title=f"Costo relativo por unidad de {nut}",
+                            xaxis_title="Ingrediente",
+                            yaxis_title=label,
+                            template="simple_white",
+                            showlegend=False,
+                        )
+                    else:
+                        fig = go.Figure(
+                            go.Bar(
+                                y=df_formula["Ingrediente"],
+                                x=[v if pd.notnull(v) else 0 for v in costs_per_unit],
+                                orientation="h",
+                                marker_color=colors,
+                                text=[f'{v:.4f}' if pd.notnull(v) else "" for v in costs_per_unit],
+                                textposition="auto",
+                                hovertemplate="%{y}<br>Costo relativo: %{x:.6f} " + label + "<extra></extra>",
+                            )
+                        )
+                        fig.update_layout(
+                            title=f"Costo relativo por unidad de {nut} (horizontal)",
+                            xaxis_title=label,
+                            yaxis_title="Ingrediente",
+                            template="simple_white",
+                            showlegend=False,
+                            yaxis={"categoryorder": "total ascending"},
+                        )
+
                     st.plotly_chart(fig, use_container_width=True)
 
                     df_rel = pd.DataFrame({
@@ -404,7 +481,6 @@ def render():
                         },
                     )
 
-    # TAB 4 - Cumplimiento (detallado)
     with tabs[3]:
         render_section("Cumplimiento nutricional", "Resumen por estado + detalle por nutriente.")
         df_comp = pd.DataFrame(compliance_data)
