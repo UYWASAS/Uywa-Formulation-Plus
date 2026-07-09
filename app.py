@@ -1,14 +1,11 @@
 # ============================================================
-# UYWA FORMULATION APP - REFACTOR PROGRESIVO
-# APP PRINCIPAL (con modo compacto + logo robusto en sidebar)
+# UYWA FORMULATION APP - APP PRINCIPAL
+# (Login + Sidebar + Toggle UI compacta + Navegación por tabs)
 # ============================================================
 
 import os
 import streamlit as st
-try:
-    from src.core.auth.service import USERS_DB, is_user_active
-except Exception:
-    from src.core.auth.policies import USERS_DB, is_user_active
+
 
 # ============================================================
 # CONFIGURACIÓN DE PÁGINA
@@ -21,7 +18,17 @@ st.set_page_config(
 
 
 # ============================================================
-# CSS BASE + MODO COMPACTO
+# AUTH IMPORT ROBUSTO
+# ============================================================
+
+try:
+    from src.core.auth.service import USERS_DB, is_user_active
+except Exception:
+    from src.core.auth.policies import USERS_DB, is_user_active
+
+
+# ============================================================
+# CSS BASE + COMPACTO
 # ============================================================
 
 BASE_CSS = """
@@ -29,10 +36,12 @@ BASE_CSS = """
 html, body, .stApp, .block-container {
     background: linear-gradient(120deg, #ffffff 0%, #eef4fc 100%) !important;
 }
+
 .block-container {
-    padding: 2rem 4rem;
+    padding: 2rem 3rem;
 }
 
+/* Sidebar */
 section[data-testid="stSidebar"] {
     background-color: #2C3E50 !important;
     color: #fff !important;
@@ -40,7 +49,14 @@ section[data-testid="stSidebar"] {
 section[data-testid="stSidebar"] * {
     color: #fff !important;
 }
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"][aria-expanded="true"] {
+    width: 18.5rem !important;
+    min-width: 18.5rem !important;
+    max-width: 18.5rem !important;
+}
 
+/* Botones */
 .stButton > button {
     background-color: #2176ff;
     color: #fff !important;
@@ -55,99 +71,16 @@ section[data-testid="stSidebar"] * {
     box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.18) !important;
 }
 
+/* Inputs */
 .stNumberInput, .stSelectbox, .stTextInput {
     background-color: #eef4fc !important;
     border-radius: 4px;
     border: 1px solid #d4e4fc !important;
-    padding: 0.4rem;
+    padding: 0.35rem;
 }
 
-footer {
-    visibility: hidden !important;
-}
-
-section[data-testid="stSidebar"],
-section[data-testid="stSidebar"][aria-expanded="true"] {
-    width: 18.5rem !important;
-    min-width: 18.5rem !important;
-    max-width: 18.5rem !important;
-}
-
-.uywa-card {
-    background: #ffffff;
-    border-radius: 12px;
-    padding: 18px 20px;
-    margin: 12px 0;
-    border: 1px solid #d9e6f7;
-    box-shadow: 0 3px 10px rgba(44, 62, 80, 0.08);
-}
-.uywa-card-info { border-left: 6px solid #2176ff; }
-.uywa-card-success { border-left: 6px solid #2ca25f; }
-.uywa-card-warning { border-left: 6px solid #f0ad4e; background: #fffaf0; }
-.uywa-card-danger { border-left: 6px solid #d9534f; background: #fff3f3; }
-
-.uywa-card-title {
-    margin: 0 0 6px 0;
-    color: #2C3E50;
-    font-size: 18px;
-    font-weight: 700;
-}
-.uywa-card-body {
-    margin: 0;
-    color: #333333;
-    font-size: 14px;
-    line-height: 1.45;
-}
-
-.uywa-metric-card {
-    background: #ffffff;
-    border-radius: 12px;
-    padding: 16px;
-    border: 1px solid #d9e6f7;
-    box-shadow: 0 3px 10px rgba(44, 62, 80, 0.07);
-    text-align: center;
-    min-height: 105px;
-}
-.uywa-metric-label {
-    color: #5f6f82;
-    font-size: 13px;
-    margin-bottom: 6px;
-}
-.uywa-metric-value {
-    color: #2C3E50;
-    font-size: 24px;
-    font-weight: 800;
-    margin-bottom: 4px;
-}
-.uywa-metric-caption {
-    color: #7a8694;
-    font-size: 12px;
-}
-
-.uywa-section-title {
-    color: #2C3E50;
-    font-weight: 800;
-    margin-top: 1.4rem;
-    margin-bottom: 0.2rem;
-}
-.uywa-section-subtitle {
-    color: #627386;
-    font-size: 14px;
-    margin-bottom: 0.8rem;
-}
-
-.uywa-badge {
-    display: inline-block;
-    padding: 4px 9px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 700;
-    margin-right: 6px;
-}
-.uywa-badge-success { background: #e5f6ee; color: #1f7a4d; }
-.uywa-badge-warning { background: #fff3cd; color: #8a6d1d; }
-.uywa-badge-danger { background: #f8d7da; color: #842029; }
-.uywa-badge-info { background: #e8f1ff; color: #1254d1; }
+/* Footer streamlit */
+footer { visibility: hidden !important; }
 </style>
 """
 
@@ -157,42 +90,29 @@ html, body, .stApp {
     font-size: 14px !important;
 }
 .block-container {
-    padding: 1.2rem 2rem !important;
-    max-width: 96% !important;
+    padding: 1.15rem 2rem !important;
+    max-width: 97% !important;
 }
-h1 { font-size: 1.75rem !important; }
-h2 { font-size: 1.4rem !important; }
-h3, .uywa-section-title { font-size: 1.15rem !important; }
-p, label, .stMarkdown, .stCaption, .stText, .stAlert {
+h1 { font-size: 1.72rem !important; }
+h2 { font-size: 1.38rem !important; }
+h3 { font-size: 1.14rem !important; }
+
+p, label, .stMarkdown, .stCaption, .stText {
     font-size: 0.9rem !important;
 }
-.uywa-card { padding: 12px 14px !important; margin: 8px 0 !important; }
-.uywa-card-title { font-size: 16px !important; }
-.uywa-card-body { font-size: 13px !important; }
 
-.uywa-metric-card {
-    padding: 10px !important;
-    min-height: 82px !important;
-}
-.uywa-metric-label { font-size: 11px !important; margin-bottom: 2px !important; }
-.uywa-metric-value { font-size: 19px !important; margin-bottom: 2px !important; }
-.uywa-metric-caption { font-size: 10px !important; }
-
-[data-testid="stDataFrame"] div, [data-testid="stTable"] div {
-    font-size: 12px !important;
-}
-.stDataFrame, .stTable {
-    transform: scale(0.98);
-    transform-origin: top left;
+.stButton > button {
+    padding: 0.38rem 0.72rem !important;
+    font-size: 0.86rem !important;
 }
 
 .stTabs [data-baseweb="tab-list"] button {
-    padding-top: 0.35rem !important;
-    padding-bottom: 0.35rem !important;
+    padding-top: 0.32rem !important;
+    padding-bottom: 0.32rem !important;
 }
-.stButton > button {
-    padding: 0.38rem 0.7rem !important;
-    font-size: 0.86rem !important;
+
+[data-testid="stDataFrame"] div, [data-testid="stTable"] div {
+    font-size: 12px !important;
 }
 </style>
 """
@@ -205,11 +125,8 @@ def apply_ui_css():
 
 
 # ============================================================
-# AUTH (manteniendo tu estructura actual)
+# LOGIN
 # ============================================================
-
-from auth import USERS_DB, is_user_active
-
 
 def login():
     st.title("Iniciar sesión")
@@ -223,7 +140,6 @@ def login():
 
         if user and user.get("password") == password:
             is_active, message = is_user_active(user)
-
             if not is_active:
                 st.error(message)
                 st.stop()
@@ -231,7 +147,6 @@ def login():
             st.session_state["logged_in"] = True
             st.session_state["usuario"] = username_clean
             st.session_state["user"] = user
-
             st.success(f"Bienvenido, {user.get('name', username_clean)}!")
             st.rerun()
         else:
@@ -242,24 +157,22 @@ def login():
 
 
 # ============================================================
-# SIDEBAR (logo robusto + toggle UI compacta)
+# SIDEBAR
 # ============================================================
 
 def render_sidebar():
     user = st.session_state.get("user", None)
 
     with st.sidebar:
-        # Toggle UI compacta
         if "ui_compact_mode" not in st.session_state:
             st.session_state["ui_compact_mode"] = True
 
         st.toggle(
             "UI compacta",
             key="ui_compact_mode",
-            help="Reduce tamaño de letra y espacios para visualizar más contenido en pantalla."
+            help="Reduce tamaño de letras y espacios para mostrar más información."
         )
 
-        # Logo robusto
         logo_path = "assets/logo.png"
         if os.path.exists(logo_path):
             st.image(logo_path, use_container_width=True)
@@ -282,22 +195,18 @@ def render_sidebar():
         )
 
         if user:
-            plan = user.get("plan", "Sin plan")
-            expires = user.get("expires", None)
-
-            st.success(f"Acceso {plan} activado")
-            if expires:
-                st.caption(f"Válido hasta: {expires}")
+            st.success(f"Acceso {user.get('plan', 'Sin plan')} activado")
+            if user.get("expires"):
+                st.caption(f"Válido hasta: {user['expires']}")
         else:
             st.warning("Por favor, inicia sesión.")
 
 
 # ============================================================
-# APP MAIN
+# MAIN
 # ============================================================
 
 def main():
-    # login gate
     if not st.session_state.get("logged_in", False):
         login()
         st.stop()
@@ -306,14 +215,26 @@ def main():
     apply_ui_css()
 
     st.markdown(
-        f"<div style='text-align:right'>👤 Usuario: <b>{st.session_state.get('usuario','')}</b></div>",
+        f"<div style='text-align:right'>👤 Usuario: <b>{st.session_state.get('usuario', '')}</b></div>",
         unsafe_allow_html=True
     )
 
-    # Router principal (ajústalo a tu estructura real de navegación)
-    # Aquí dejo Aves como página activa por defecto.
-    from src.ui.pages.formulators.aves import render as render_formulator_aves
-    render_formulator_aves()
+    # Pestañas principales
+    from src.ui.pages.formulators.aves import render as render_aves
+    from src.ui.pages.formulators.cerdos import render as render_cerdos
+    from src.ui.pages.formulators.rumiantes import render as render_rumiantes
+    from src.ui.pages.dashboard import render as render_dashboard
+
+    tabs = st.tabs(["Dashboard", "Aves", "Cerdos", "Rumiantes"])
+
+    with tabs[0]:
+        render_dashboard()
+    with tabs[1]:
+        render_aves()
+    with tabs[2]:
+        render_cerdos()
+    with tabs[3]:
+        render_rumiantes()
 
 
 if __name__ == "__main__":
