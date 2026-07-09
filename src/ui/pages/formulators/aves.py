@@ -623,23 +623,19 @@ def render_formulation_aves():
     preset_compat = [n for n in preset.keys() if n in nutrients_all]
 
     c_preset, c_all, c_clear = st.columns([1.3, 1.5, 1])
-    c_preset, c_clear = st.columns([2, 1])
     with c_preset:
         if st.button("Cargar preset completo", key="aves_load_preset", use_container_width=True):
             selected = preset_compat.copy()
-            st.session_state["aves_nutrients_selected"] = preset_compat.copy()
             req_data = {}
             for n in selected:
-            for n in preset_compat:
                 req_data[n] = {
                     "min": _normalize_bound(preset.get(n, {}).get("min", 0)),
                     "max": _normalize_bound(preset.get(n, {}).get("max", 0)),
                 }
             st.session_state["aves_nutrients_selected"] = selected
-            st.session_state["aves_nutrients_widget"] = selected
+            st.session_state["aves_nutrients_widget_v2"] = selected
             st.session_state["aves_req_input"] = req_data
             st.success("Preset cargado. Puedes agregar más nutrientes desde la matriz activa.")
-            st.success("Preset cargado. Puedes agregar más nutrientes manualmente desde la matriz activa.")
             st.rerun()
 
     with c_all:
@@ -652,7 +648,7 @@ def render_formulation_aves():
                     "max": _normalize_bound(current_req.get(n, {}).get("max", preset.get(n, {}).get("max", 0) if n in preset else 0)),
                 }
             st.session_state["aves_nutrients_selected"] = list(nutrients_all)
-            st.session_state["aves_nutrients_widget"] = list(nutrients_all)
+            st.session_state["aves_nutrients_widget_v2"] = list(nutrients_all)
             st.session_state["aves_req_input"] = req_data
             st.success(f"Se cargaron {len(nutrients_all)} nutrientes detectados en la matriz.")
             st.rerun()
@@ -660,7 +656,7 @@ def render_formulation_aves():
     with c_clear:
         if st.button("Limpiar nutrientes", key="aves_clear_nutrients", use_container_width=True):
             st.session_state["aves_nutrients_selected"] = []
-            st.session_state["aves_nutrients_widget"] = []
+            st.session_state["aves_nutrients_widget_v2"] = []
             st.session_state["aves_req_input"] = {}
             st.rerun()
 
@@ -674,28 +670,44 @@ def render_formulation_aves():
             ignored = [n for n in req_loaded["requirements"].keys() if n not in nutrients_all]
             st.session_state["aves_req_input"] = req_filtered
             st.session_state["aves_nutrients_selected"] = list(req_filtered.keys())
-            st.session_state["aves_nutrients_widget"] = list(req_filtered.keys())
+            st.session_state["aves_nutrients_widget_v2"] = list(req_filtered.keys())
             if ignored:
                 st.warning("Nutrientes ignorados porque no existen en la matriz activa: " + ", ".join(ignored))
             st.success(f"Requerimientos cargados: {len(req_filtered)} nutrientes aplicados.")
             st.rerun()
 
-    restored_or_current = st.session_state.get("aves_nutrients_selected", [])
-    default_nutrients = restored_or_current if restored_or_current else preset_compat[: min(14, len(preset_compat))]
-    sanitized_nutrients = _sanitize_session_list("aves_nutrients_selected", nutrients_all, default_nutrients)
+    # ------------------- SELECTOR DINÁMICO DE NUTRIENTES -------------------
+    # No usar aves_nutrients_selected como key del widget. Esa clave queda solo
+    # como estado final para solver/resultados. El widget usa una clave versionada
+    # para evitar estados antiguos de Streamlit que impidan borrar/agregar.
+    widget_key = "aves_nutrients_widget_v2"
+    options_signature = tuple(nutrients_all)
+    prev_signature = st.session_state.get("aves_nutrients_options_signature_v2")
 
-    if "aves_nutrients_widget" not in st.session_state or set(st.session_state.get("aves_nutrients_widget", [])) != set(sanitized_nutrients):
-        st.session_state["aves_nutrients_widget"] = sanitized_nutrients
-    _sanitize_session_list("aves_nutrients_selected", nutrients_all, default_nutrients)
+    if widget_key not in st.session_state:
+        restored_or_current = st.session_state.get("aves_nutrients_selected", []) or []
+        if isinstance(restored_or_current, str):
+            restored_or_current = [restored_or_current]
+        initial = [n for n in restored_or_current if n in nutrients_all]
+        if not initial and not st.session_state.get("aves_nutrients_initialized", False):
+            initial = [n for n in preset_compat[: min(14, len(preset_compat))] if n in nutrients_all]
+        st.session_state[widget_key] = initial
+        st.session_state["aves_nutrients_initialized"] = True
+
+    elif prev_signature != options_signature:
+        # Si cambió la matriz, conserva los nutrientes existentes que sigan disponibles.
+        current_widget = st.session_state.get(widget_key, []) or []
+        if isinstance(current_widget, str):
+            current_widget = [current_widget]
+        st.session_state[widget_key] = [n for n in current_widget if n in nutrients_all]
+
+    st.session_state["aves_nutrients_options_signature_v2"] = options_signature
 
     selected_nutrients = st.multiselect(
         "Nutrientes a considerar",
         options=nutrients_all,
-        key="aves_nutrients_widget",
+        key=widget_key,
         help="El preset solo preselecciona. Puedes buscar y seleccionar cualquier columna nutricional numérica de la matriz cargada.",
-        nutrients_all,
-        key="aves_nutrients_selected",
-        help="El preset solo preselecciona. Aquí puedes usar cualquier nutriente presente en la matriz actual.",
     )
     selected_nutrients = [n for n in selected_nutrients if n in nutrients_all]
     st.session_state["aves_nutrients_selected"] = list(selected_nutrients)
@@ -752,18 +764,10 @@ def render_formulation_aves():
         preview_result=preview,
         df_sel=df_sel,
     )
-    req_rows = []
-    for n in selected_nutrients:
-        req_rows.append({
-            "Nutriente": n,
-            "Min": req_input_clean[n]["min"],
-            "Max": req_input_clean[n]["max"],
-        })
 
     with st.form("aves_req_form"):
         df_req_edit = st.data_editor(
             df_req_table,
-            pd.DataFrame(req_rows),
             use_container_width=True,
             hide_index=True,
             key="aves_req_editor",
@@ -795,7 +799,7 @@ def render_formulation_aves():
 
         st.session_state["aves_req_input"] = new_req
         st.session_state["aves_nutrients_selected"] = selected_from_editor
-        st.session_state["aves_nutrients_widget"] = selected_from_editor
+        st.session_state["aves_nutrients_widget_v2"] = selected_from_editor
         st.success("Requerimientos actualizados.")
         st.rerun()
 
