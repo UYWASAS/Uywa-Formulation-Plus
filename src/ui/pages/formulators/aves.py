@@ -1,7 +1,6 @@
 import os
 import json
 import zipfile
-from datetime import date
 from io import BytesIO
 
 import pandas as pd
@@ -12,7 +11,7 @@ from src.core.formulation.presets import get_stage_preset
 from src.adapters.optimization_adapter import OptimizationAdapter
 
 from src.ui.components.sections import render_section
-from src.ui.components.cards import render_card, render_metric_card
+from src.ui.components.cards import render_card
 from src.ui.components.tables import render_table
 
 
@@ -36,18 +35,15 @@ def _resolve_ema_for_stage_from_preset(etapa, preset, nutrients_all):
 
     if len(ema_in_preset) == 1:
         preferred = ema_in_preset[0]
-        reason = "preset"
     elif len(ema_in_preset) > 1:
         preferred = "EMA_AVES" if "EMA_AVES" in ema_in_preset else ema_in_preset[0]
-        reason = "preset_ambiguous"
     else:
         preferred = "EMA_AVES" if "EMA_AVES" in ema_in_matrix else (
             "EMA_POLLIT" if "EMA_POLLIT" in ema_in_matrix else None
         )
-        reason = "fallback_matrix"
 
     other = "EMA_POLLIT" if preferred == "EMA_AVES" else ("EMA_AVES" if preferred == "EMA_POLLIT" else None)
-    return preferred, other, reason
+    return preferred, other
 
 
 def _load_ingredients_robust(uploaded_file=None):
@@ -277,7 +273,6 @@ def render_formulation_aves():
     df["Ingrediente"] = df["Ingrediente"].astype(str)
     df["precio"] = pd.to_numeric(df["precio"], errors="coerce").fillna(0)
 
-    render_section("Selección de ingredientes")
     ing_all = df["Ingrediente"].dropna().tolist()
     pre = st.session_state.get("aves_ingredientes_sel", ing_all[: min(25, len(ing_all))])
     ingredientes_sel = st.multiselect("Ingredientes a usar", ing_all, default=[i for i in pre if i in ing_all], key="aves_ingredientes_sel")
@@ -288,7 +283,6 @@ def render_formulation_aves():
     with st.expander("Ver o editar composición de ingredientes seleccionados", expanded=False):
         df_sel = st.data_editor(df_sel, use_container_width=True, num_rows="dynamic", key="aves_df_editor")
 
-    render_section("Límites de inclusión (%)")
     ing_limit = st.multiselect("Ingredientes con límites", ingredientes_sel, default=st.session_state.get("aves_ingredientes_limitar", []), key="aves_ingredientes_limitar")
     min_limits, max_limits = {}, {}
     min_loaded = st.session_state.get("aves_min_limits_loaded", {})
@@ -301,7 +295,6 @@ def render_formulation_aves():
         min_limits[ing] = _safe_float(min_v, 0)
         max_limits[ing] = _safe_float(max_v, 0)
 
-    render_section("Requerimientos nutricionales")
     etapas_aves = [
         "Broiler Iniciación", "Broiler Crecimiento", "Broiler Cebo", "Broiler Acabado",
         "Pollita Recría 0-5", "Pollita Recría 5-10", "Pollita Recría 10-17",
@@ -317,7 +310,7 @@ def render_formulation_aves():
     preset = get_stage_preset("Aves", etapa)
     preset_compat = [n for n in preset.keys() if n in nutrients_all]
 
-    preferred_ema, other_ema, _ = _resolve_ema_for_stage_from_preset(etapa, preset, nutrients_all)
+    preferred_ema, other_ema = _resolve_ema_for_stage_from_preset(etapa, preset, nutrients_all)
     if preferred_ema and other_ema and preferred_ema in preset_compat and other_ema in preset_compat:
         preset_compat = [n for n in preset_compat if n != other_ema]
         st.warning(f"Preset ambiguo en EMA para '{etapa}'. Se priorizó {preferred_ema}.")
@@ -335,12 +328,21 @@ def render_formulation_aves():
             st.session_state[f"aves_req_max_{n}"] = float(preset.get(n, {}).get("max", 0) or 0)
 
         st.session_state["aves_req_input"] = {
-            n: {"min": _normalize_bound(st.session_state.get(f"aves_req_min_{n}", 0)), "max": _normalize_bound(st.session_state.get(f"aves_req_max_{n}", 0))}
+            n: {
+                "min": _normalize_bound(st.session_state.get(f"aves_req_min_{n}", 0)),
+                "max": _normalize_bound(st.session_state.get(f"aves_req_max_{n}", 0)),
+            }
             for n in selected
         }
         st.rerun()
 
-    selected_nutrients = st.multiselect("Nutrientes a considerar", nutrients_all, default=st.session_state.get("aves_nutrients_selected", preset_compat[: min(14, len(preset_compat))]), key="aves_nutrients_selected")
+    selected_nutrients = st.multiselect(
+        "Nutrientes a considerar",
+        nutrients_all,
+        default=st.session_state.get("aves_nutrients_selected", preset_compat[: min(14, len(preset_compat))]),
+        key="aves_nutrients_selected",
+    )
+
     effective_nutrients = list(selected_nutrients)
     if not effective_nutrients:
         return
@@ -349,7 +351,10 @@ def render_formulation_aves():
     req_input_clean = {}
     for n in effective_nutrients:
         if n in current_req_input:
-            req_input_clean[n] = {"min": _normalize_bound(current_req_input[n].get("min", 0)), "max": _normalize_bound(current_req_input[n].get("max", 0))}
+            req_input_clean[n] = {
+                "min": _normalize_bound(current_req_input[n].get("min", 0)),
+                "max": _normalize_bound(current_req_input[n].get("max", 0)),
+            }
         else:
             req_input_clean[n] = {
                 "min": _normalize_bound(st.session_state.get(f"aves_req_min_{n}", preset.get(n, {}).get("min", 0))),
@@ -357,7 +362,7 @@ def render_formulation_aves():
             }
 
     st.session_state["aves_req_input"] = req_input_clean
-    st.session_state["ingredients_df"] = df_sel.copy()  # para módulo global de gráficos
+    st.session_state["ingredients_df"] = df_sel.copy()
 
     if "aves_ratios" not in st.session_state:
         st.session_state["aves_ratios"] = []
@@ -380,13 +385,6 @@ def render_formulation_aves():
         selected_stage=etapa,
         ratios=ratios_active,
     )
-
-    if not preview.get("success"):
-        st.warning(preview.get("message", "Preview no factible"))
-        diag = preview.get("infeasibility_diagnostics", [])
-        if diag:
-            with st.expander("Diagnóstico preview", expanded=False):
-                render_table(pd.DataFrame(diag))
 
     rows = []
     for n in effective_nutrients:
@@ -482,43 +480,8 @@ def render_formulation_aves():
 
 
 def render_results_tab():
-    st.subheader("Resultados")
-    result = st.session_state.get("last_result_aves")
-    if not result:
-        st.info("Aún no hay resultados para Aves.")
-        return
-
-    if not result.get("success"):
-        st.error(result.get("message", "No se pudo formular."))
-        diag = result.get("infeasibility_diagnostics", [])
-        if diag:
-            render_table(pd.DataFrame(diag))
-        return
-
-    diet = result.get("diet", {})
-    cost = result.get("cost", 0)
-    nutritional_values = result.get("nutritional_values", {})
-    compliance_data = result.get("compliance_data", [])
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        render_metric_card("Costo (100 kg)", f"${cost:.2f}", "Salida solver")
-    with c2:
-        render_metric_card("Costo/kg", f"${(cost/100):.4f}", "Estimado")
-    with c3:
-        render_metric_card("Ingredientes activos", str(len(diet)), "Con inclusión > 0")
-
-    df_diet = pd.DataFrame(list(diet.items()), columns=["Ingrediente", "Inclusión (%)"])
-    if not df_diet.empty:
-        render_table(df_diet.sort_values("Inclusión (%)", ascending=False))
-
-    if compliance_data:
-        st.markdown("### Cumplimiento nutricional")
-        render_table(pd.DataFrame(compliance_data))
-
-    if nutritional_values:
-        with st.expander("Valores nutricionales", expanded=False):
-            render_table(pd.DataFrame([{"Nutriente": k, "Valor": v} for k, v in nutritional_values.items()]))
+    from src.ui.pages.results import render as render_global_results
+    render_global_results()
 
 
 def render_charts_tab():
