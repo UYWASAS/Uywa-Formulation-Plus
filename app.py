@@ -205,7 +205,7 @@ def apply_ui_css():
 # AUTH (manteniendo tu estructura actual)
 # ============================================================
 
-from auth import USERS_DB, is_user_active
+from src.core.auth.service import USERS_DB, is_user_active
 
 
 def login():
