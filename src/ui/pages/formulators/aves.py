@@ -314,10 +314,10 @@ def render_results_tab():
 
 
 def render_charts_tab():
-    # Reutiliza el módulo global de gráficos sin duplicar lógica
+    # Reutiliza el módulo global de gráficos
     from src.ui.pages.charts import render as render_global_charts
     render_global_charts()
-
+    
     diet = result.get("diet", {}) or {}
     compliance = result.get("compliance_data", []) or []
     cost = float(result.get("cost", 0) or 0)
