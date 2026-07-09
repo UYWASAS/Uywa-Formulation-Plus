@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uywa/specs/uywa_scenario_v1.0.0.schema.json",
+  "title": "UYWA Scenario Spec v1.0.0",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "scenario_id",
+    "scenario_name",
+    "created_at",
+    "species",
+    "stage",
+    "inputs",
+    "outputs",
+    "analytics"
+  ],
+  "properties": {
+    "spec_version": { "type": "string", "const": "1.0.0" },
+    "scenario_id": { "type": "string", "minLength": 8 },
+    "scenario_name": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "species": { "type": "string", "enum": ["Aves", "Cerdos", "Rumiantes"] },
+    "stage": { "type": "string", "minLength": 1 },
+
+    "owner": {
+      "type": "object",
+      "properties": {
+        "user": { "type": "string" },
+        "org": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "app_version": { "type": "string" },
+        "solver_engine": { "type": "string" },
+        "solver_version": { "type": "string" },
+        "currency": { "type": "string", "default": "USD" },
+        "basis": { "type": "string", "default": "100kg" }
+      },
+      "additionalProperties": true
+    },
+
+    "inputs": {
+      "type": "object",
+      "required": ["selected_ingredients", "limits", "requirements", "ratios"],
+      "properties": {
+        "ingredients_snapshot": { "type": "object" },
+        "ingredients_hash": { "type": "string" },
+        "selected_ingredients": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "limits": {
+          "type": "object",
+          "required": ["min", "max"],
+          "properties": {
+            "min": { "type": "object", "additionalProperties": { "type": "number" } },
+            "max": { "type": "object", "additionalProperties": { "type": "number" } }
+          }
+        },
+        "requirements": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["min", "max"],
+            "properties": {
+              "min": { "type": "number" },
+              "max": { "type": "number" }
+            }
+          }
+        },
+        "ratios": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["numerador", "denominador", "operador", "valor"],
+            "properties": {
+              "numerador": { "type": "string" },
+              "denominador": { "type": "string" },
+              "operador": { "type": "string", "enum": [">=", "<=", "="] },
+              "valor": { "type": "number" }
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "outputs": {
+      "type": "object",
+      "required": ["success", "diet", "cost", "nutritional_values", "compliance_data"],
+      "properties": {
+        "success": { "type": "boolean" },
+        "message": { "type": "string" },
+        "diet": { "type": "object", "additionalProperties": { "type": "number" } },
+        "cost": { "type": "number" },
+        "nutritional_values": { "type": "object", "additionalProperties": { "type": "number" } },
+        "compliance_data": { "type": "array", "items": { "type": "object" } },
+        "constraint_diagnostics": { "type": "object" },
+        "infeasibility_diagnostics": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": true
+    },
+
+    "analytics": {
+      "type": "object",
+      "required": ["kpis"],
+      "properties": {
+        "kpis": { "type": "object" },
+        "economic_drivers": { "type": "array", "items": { "type": "object" } },
+        "technical_drivers": { "type": "array", "items": { "type": "object" } },
+        "quality_flags": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+
+    "report": {
+      "type": "object",
+      "properties": {
+        "client_summary": { "type": "object" },
+        "technical_appendix": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+
+    "extensions": { "type": "object" }
+  },
+  "additionalProperties": false
+}
