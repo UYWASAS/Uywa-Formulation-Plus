@@ -2,6 +2,7 @@ import os
 import io
 import json
 import zipfile
+import hashlib
 from datetime import date
 from io import BytesIO
 
@@ -90,46 +91,24 @@ def _sanitize_session_list(key: str, valid_options: list, fallback: list | None 
 
 def _get_available_nutrients(df: pd.DataFrame) -> list:
     """
-    Devuelve todos los nutrientes realmente disponibles en la matriz activa.
-    Combina la función existente del proyecto con una detección robusta de columnas numéricas.
+    Devuelve todos los nutrientes detectados en la matriz recibida.
+
+    La detección se delega a data_access.py y no depende de:
+    - especie;
+    - etapa;
+    - preset;
+    - requerimientos predeterminados.
     """
     if df is None or df.empty:
         return []
 
-    candidates = []
-
     try:
-        candidates.extend(get_nutrient_list(df) or [])
-    except Exception:
-        pass
-
-    for col in df.columns:
-        col_str = str(col).strip()
-        if not col_str:
-            continue
-        if _clean_key_name(col_str) in META_COLUMNS:
-            continue
-
-        series = pd.to_numeric(df[col], errors="coerce")
-        # Se acepta como nutriente si tiene al menos un valor numérico válido.
-        if series.notna().sum() > 0:
-            candidates.append(col_str)
-
-    # Mantener orden de aparición en la matriz, agregando al final nutrientes externos válidos.
-    ordered = []
-    seen = set()
-    for col in df.columns:
-        col_str = str(col).strip()
-        if col_str in candidates and col_str not in seen:
-            ordered.append(col_str)
-            seen.add(col_str)
-
-    for n in candidates:
-        if n not in seen:
-            ordered.append(n)
-            seen.add(n)
-
-    return ordered
+        return list(dict.fromkeys(get_nutrient_list(df) or []))
+    except Exception as exc:
+        st.warning(
+            f"No fue posible detectar automáticamente los nutrientes: {exc}"
+        )
+        return []
 
 
 
@@ -533,10 +512,30 @@ def render_formulation_aves():
         return
 
     df_sel = df[df["Ingrediente"].isin(ingredientes_sel)].copy()
-    with st.expander("Ver o editar composición de ingredientes seleccionados", expanded=False):
-        df_sel = st.data_editor(df_sel, use_container_width=True, num_rows="dynamic", key="aves_df_editor")
+
+    matrix_signature = _matrix_signature(df)
+    
+    with st.expander(
+        "Ver o editar composición de ingredientes seleccionados",
+        expanded=False,
+    ):
+        st.caption(
+            f"Columnas en la matriz cargada: {len(df.columns)} | "
+            f"Ingredientes seleccionados: {len(df_sel)}"
+        )
+    
+        df_sel = st.data_editor(
+            df_sel,
+            use_container_width=True,
+            num_rows="dynamic",
+            key=f"aves_df_editor_{matrix_signature}",
+        )
+    
         df_sel["Ingrediente"] = df_sel["Ingrediente"].astype(str)
-        df_sel["precio"] = pd.to_numeric(df_sel["precio"], errors="coerce").fillna(0)
+        df_sel["precio"] = pd.to_numeric(
+            df_sel["precio"],
+            errors="coerce",
+        ).fillna(0)
 
     st.session_state["ingredients_df"] = df_sel.copy()
     st.caption(
@@ -618,7 +617,27 @@ def render_formulation_aves():
 
     etapa = st.selectbox("Etapa (Aves)", etapas_aves, index=etapas_aves.index(etapa_default), key="aves_etapa")
 
-    nutrients_all = _get_available_nutrients(df_sel)
+    nutrients_all = _get_available_nutrients(df)
+    with st.expander("Diagnóstico de matriz y nutrientes", expanded=False):
+        st.write(f"Columnas cargadas en la matriz: {len(df.columns)}")
+        st.write(f"Nutrientes detectados: {len(nutrients_all)}")
+    
+        st.markdown("**Todas las columnas cargadas:**")
+        st.write(list(df.columns))
+    
+        st.markdown("**Nutrientes disponibles para formulación:**")
+        st.write(nutrients_all)
+    
+        columns_not_detected = [
+            str(col)
+            for col in df.columns
+            if str(col) not in nutrients_all
+        ]
+    
+        st.markdown("**Columnas no clasificadas como nutrientes:**")
+        st.write(columns_not_detected)
+        
+    widget_key = f"aves_nutrients_widget_{matrix_signature}"
     preset = get_stage_preset("Aves", etapa) or {}
     preset_compat = [n for n in preset.keys() if n in nutrients_all]
 
@@ -633,7 +652,7 @@ def render_formulation_aves():
                     "max": _normalize_bound(preset.get(n, {}).get("max", 0)),
                 }
             st.session_state["aves_nutrients_selected"] = selected
-            st.session_state["aves_nutrients_widget_v6"] = selected
+            st.session_state[widget_key] = selected
             st.session_state["aves_req_input"] = req_data
             st.success("Preset cargado. Puedes agregar más nutrientes desde la matriz activa.")
             st.rerun()
@@ -648,7 +667,7 @@ def render_formulation_aves():
                     "max": _normalize_bound(current_req.get(n, {}).get("max", preset.get(n, {}).get("max", 0) if n in preset else 0)),
                 }
             st.session_state["aves_nutrients_selected"] = list(nutrients_all)
-            st.session_state["aves_nutrients_widget_v6"] = list(nutrients_all)
+            st.session_state[widget_key] = list(nutrients_all)
             st.session_state["aves_req_input"] = req_data
             st.success(f"Se cargaron {len(nutrients_all)} nutrientes detectados en la matriz.")
             st.rerun()
@@ -656,7 +675,7 @@ def render_formulation_aves():
     with c_clear:
         if st.button("Limpiar nutrientes", key="aves_clear_nutrients", use_container_width=True):
             st.session_state["aves_nutrients_selected"] = []
-            st.session_state["aves_nutrients_widget_v6"] = []
+            st.session_state[widget_key] = []
             st.session_state["aves_req_input"] = {}
             st.rerun()
 
@@ -670,7 +689,7 @@ def render_formulation_aves():
             ignored = [n for n in req_loaded["requirements"].keys() if n not in nutrients_all]
             st.session_state["aves_req_input"] = req_filtered
             st.session_state["aves_nutrients_selected"] = list(req_filtered.keys())
-            st.session_state["aves_nutrients_widget_v6"] = list(req_filtered.keys())
+            st.session_state[widget_key] = list(req_filtered.keys())
             if ignored:
                 st.warning("Nutrientes ignorados porque no existen en la matriz activa: " + ", ".join(ignored))
             st.success(f"Requerimientos cargados: {len(req_filtered)} nutrientes aplicados.")
@@ -682,7 +701,7 @@ def render_formulation_aves():
         "aves_nutrients_selected", nutrients_all, restored_or_current
     )
 
-    widget_key = "aves_nutrients_widget_v6"
+    widget_key = f"aves_nutrients_widget_{matrix_signature}"
     if widget_key not in st.session_state:
         st.session_state[widget_key] = list(sanitized_nutrients)
     else:
@@ -786,7 +805,7 @@ def render_formulation_aves():
 
         st.session_state["aves_req_input"] = new_req
         st.session_state["aves_nutrients_selected"] = selected_from_editor
-        st.session_state["aves_nutrients_widget_v6"] = selected_from_editor
+        st.session_state[widget_key] = selected_from_editor
         st.success("Requerimientos actualizados.")
         st.rerun()
 
