@@ -12,7 +12,10 @@ NON_NUTRIENT_COLUMNS = {
     "categoria", "category", "grupo", "group", "tipo", "type",
     "origen", "origin", "fuente", "source", "observacion",
     "observaciones", "nota", "notas", "codigo", "código", "id",
+    "materia seca (%)",
 }
+
+MISSING_MARKERS = {"", ".", "-", "--", "nd", "n.d.", "na", "n/a", "s/d", "sd"}
 
 
 def _normalize_column_name(value) -> str:
@@ -20,7 +23,7 @@ def _normalize_column_name(value) -> str:
 
 
 def _read_csv_robust(uploaded_file) -> pd.DataFrame:
-    """Lee CSV con detección automática de separador y codificación."""
+    """Lee CSV conservando todas las columnas y probando separadores/codificaciones."""
     try:
         raw = uploaded_file.getvalue()
     except Exception:
@@ -37,37 +40,33 @@ def _read_csv_robust(uploaded_file) -> pd.DataFrame:
         {"sep": ",", "encoding": "latin1"},
     ]
 
-    best = pd.DataFrame()
+    candidates = []
     for kwargs in attempts:
         try:
             df = pd.read_csv(io.BytesIO(raw), **kwargs)
-            if df is not None and len(df.columns) > len(best.columns):
-                best = df
-            if len(df.columns) > 1:
-                return df
+            if df is not None and not df.empty:
+                candidates.append(df)
         except Exception:
             continue
-    return best
+    if not candidates:
+        return pd.DataFrame()
+    return max(candidates, key=lambda d: len(d.columns))
 
 
 def load_ingredients(uploaded_file):
-    """
-    Carga una matriz de ingredientes desde CSV o XLSX sin limitar columnas.
-    Los presets por especie no intervienen en esta etapa.
-    """
+    """Carga CSV/XLS/XLSX sin filtrar columnas por especie ni por preset."""
     if uploaded_file is None:
         return pd.DataFrame()
 
     filename = str(getattr(uploaded_file, "name", "")).lower()
-
     try:
-        if filename.endswith(".xlsx") or filename.endswith(".xls"):
-            uploaded_file.seek(0)
+        uploaded_file.seek(0)
+        if filename.endswith((".xlsx", ".xls")):
             df = pd.read_excel(uploaded_file)
         elif filename.endswith(".csv"):
             df = _read_csv_robust(uploaded_file)
         else:
-            st.error("Formato de archivo de ingredientes no soportado. Usa .csv, .xls o .xlsx")
+            st.error("Formato no soportado. Usa .csv, .xls o .xlsx")
             return pd.DataFrame()
     except Exception as exc:
         st.error(f"Error al cargar ingredientes: {exc}")
@@ -83,14 +82,25 @@ def load_ingredients(uploaded_file):
     return df
 
 
-def get_nutrient_list(ingredients_df):
-    """
-    Devuelve todos los nutrientes numéricos disponibles en la matriz activa.
+def _numeric_series(series: pd.Series) -> pd.Series:
+    """Convierte columnas parcialmente numéricas, con coma decimal y porcentaje."""
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_numeric(series, errors="coerce")
 
-    La lista depende exclusivamente de las columnas del archivo cargado; no
-    depende de especie, etapa ni preset. Se excluyen únicamente columnas de
-    identificación/metadatos.
-    """
+    s = series.astype(str).str.strip()
+    lower = s.str.lower()
+    s = s.mask(lower.isin(MISSING_MARKERS))
+    s = s.str.replace("%", "", regex=False)
+    s = s.str.replace(r"\s+", "", regex=True)
+    both = s.str.contains(",", na=False) & s.str.contains(r"\.", na=False)
+    s.loc[both] = s.loc[both].str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    only_comma = s.str.contains(",", na=False) & ~s.str.contains(r"\.", na=False)
+    s.loc[only_comma] = s.loc[only_comma].str.replace(",", ".", regex=False)
+    return pd.to_numeric(s, errors="coerce")
+
+
+def get_nutrient_list(ingredients_df):
+    """Devuelve todas las columnas nutricionales detectables de la matriz activa."""
     if ingredients_df is None or ingredients_df.empty:
         return []
 
@@ -99,14 +109,11 @@ def get_nutrient_list(ingredients_df):
         name = _normalize_column_name(col)
         if not name or name.lower() in NON_NUTRIENT_COLUMNS:
             continue
-
-        numeric = pd.to_numeric(ingredients_df[col], errors="coerce")
+        numeric = _numeric_series(ingredients_df[col])
         if numeric.notna().any():
             nutrients.append(name)
-
     return nutrients
 
 
 def get_preset_requirements(especie, etapa):
-    """Retorna requerimientos preset por especie y etapa."""
     return PRESETS.get(especie, {}).get(etapa, {})
