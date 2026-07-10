@@ -783,20 +783,23 @@ def render_formulation_aves():
 
     if save_req_btn:
         new_req = {}
-        selected_from_editor = []
+    
         for _, r in df_req_edit.iterrows():
             n = str(r.get("Nutriente", "")).strip()
-            if not n or n not in nutrients_all:
+    
+            if not n or n not in selected_nutrients:
                 continue
-            selected_from_editor.append(n)
+    
             new_req[n] = {
                 "min": _normalize_bound(r.get("Min", 0)),
                 "max": _normalize_bound(r.get("Max", 0)),
             }
-
+    
+        # Guardar únicamente los requerimientos editados.
+        # No modificar widget_key aquí porque el multiselect ya fue creado.
         st.session_state["aves_req_input"] = new_req
-        st.session_state["aves_nutrients_selected"] = selected_from_editor
-        st.session_state[widget_key] = selected_from_editor
+        st.session_state["aves_nutrients_selected"] = list(selected_nutrients)
+    
         st.success("Requerimientos actualizados.")
         st.rerun()
 
