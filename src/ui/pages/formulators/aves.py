@@ -618,16 +618,7 @@ def render_formulation_aves():
     etapa = st.selectbox("Etapa (Aves)", etapas_aves, index=etapas_aves.index(etapa_default), key="aves_etapa")
 
     nutrients_all = _get_available_nutrients(df)
-    with st.expander("Diagnóstico de matriz y nutrientes", expanded=False):
-        st.write(f"Columnas cargadas en la matriz: {len(df.columns)}")
-        st.write(f"Nutrientes detectados: {len(nutrients_all)}")
-    
-        st.markdown("**Todas las columnas cargadas:**")
-        st.write(list(df.columns))
-    
-        st.markdown("**Nutrientes disponibles para formulación:**")
-        st.write(nutrients_all)
-    
+        
         columns_not_detected = [
             str(col)
             for col in df.columns
