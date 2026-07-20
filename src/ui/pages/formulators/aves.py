@@ -615,22 +615,27 @@ def render_formulation_aves():
     if etapa_default not in etapas_aves:
         etapa_default = etapas_aves[0]
 
-    etapa = st.selectbox("Etapa (Aves)", etapas_aves, index=etapas_aves.index(etapa_default), key="aves_etapa")
-
-    nutrients_all = _get_available_nutrients(df)
-        
-        columns_not_detected = [
-            str(col)
-            for col in df.columns
-            if str(col) not in nutrients_all
-        ]
+    etapa = st.selectbox(
+        "Etapa (Aves)",
+        etapas_aves,
+        index=etapas_aves.index(etapa_default),
+        key="aves_etapa",
+    )
     
-        st.markdown("**Columnas no clasificadas como nutrientes:**")
-        st.write(columns_not_detected)
-        
+    # Detectar nutrientes desde la matriz completa.
+    nutrients_all = _get_available_nutrients(df)
+    
+    # Clave dinámica para que el selector se renueve cuando cambia la matriz.
     widget_key = f"aves_nutrients_widget_{matrix_signature}"
+    
+    # El preset solo aporta valores sugeridos; no limita los nutrientes disponibles.
     preset = get_stage_preset("Aves", etapa) or {}
-    preset_compat = [n for n in preset.keys() if n in nutrients_all]
+    
+    preset_compat = [
+        n
+        for n in preset.keys()
+        if n in nutrients_all
+    ]
 
     c_preset, c_all, c_clear = st.columns([1.3, 1.5, 1])
     with c_preset:
