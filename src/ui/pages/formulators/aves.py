@@ -73,6 +73,27 @@ def _normalize_bound(v):
 def _clean_key_name(value) -> str:
     return str(value).strip().lower()
 
+def _matrix_signature(df: pd.DataFrame) -> str:
+    """
+    Genera una firma estable según la estructura de la matriz.
+
+    La clave cambia cuando cambia:
+    - el nombre de las columnas;
+    - el número de columnas;
+    - el número de filas.
+    """
+    if df is None or df.empty:
+        return "empty"
+
+    structure = "|".join(
+        str(col).strip()
+        for col in df.columns
+    )
+    structure += f"|rows={len(df)}"
+
+    return hashlib.md5(
+        structure.encode("utf-8")
+    ).hexdigest()[:10]
 
 def _sanitize_session_list(key: str, valid_options: list, fallback: list | None = None) -> list:
     """Conserva solo valores válidos sin repoblar una selección vacía."""
@@ -718,8 +739,6 @@ def render_formulation_aves():
         f"Nutrientes disponibles en la matriz: {len(nutrients_all)} | "
         f"Nutrientes seleccionados: {len(selected_nutrients)}"
     )
-    with st.expander("Ver nutrientes detectados en la matriz", expanded=False):
-        st.write(", ".join(nutrients_all) if nutrients_all else "No se detectaron nutrientes numéricos.")
 
     if not selected_nutrients:
         st.info("Selecciona al menos un nutriente.")
